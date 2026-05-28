@@ -42,6 +42,13 @@ v0.2 [2026-05-28] Rediseño minimalista + tablas resumen clickeables.
   - Cada celda con valor navega a la vista correspondiente con filtros pre-aplicados.
   - Sistema de filtros vía params en cada vista (equipos, mp, pendientes, eventos).
   - Chip de filtros activos visible y limpiable en cada vista.
+v0.19 [2026-05-28] Fix: botones del tab Resumen no funcionaban.
+  - Bug: renderResumenEquipo es función externa, sus botones "Resolver →",
+    "Ver bitácora →", "Ver todos →", "Ver →" referenciaban tab/renderTabs/
+    renderTabBody del closure de VIEWS.equipo → click no hacía nada.
+  - Fix: VIEWS.equipo pasa callback setTab(name) que sí está en el closure
+    correcto. Los 4 botones del Resumen ahora navegan.
+  - Audit completo del resto del programa: no hay otros closures rotos.
 v0.18 [2026-05-28] Dashboard: toggle "Por ejecutor / Por mes" en MP del mes.
   - Nueva tabla "MP del año por mes" con 12 filas: Programadas, Asignadas,
     Sin asignar, Ejecutadas, Pendientes, Cumplimiento %.
@@ -692,7 +699,7 @@ header.top nav button .nav-badge{display:inline-block;margin-left:6px;padding:0 
 <body>
 <div class="app">
   <header class="top">
-    <h1>HHHA <small>Equipos Críticos · v0.18</small></h1>
+    <h1>HHHA <small>Equipos Críticos · v0.19</small></h1>
     <nav id="nav"></nav>
     <div class="tools">
       <span id="state-indicator" class="state-indicator" title="">—</span>
@@ -737,7 +744,7 @@ const SEED = {"equipos":[{"id":1,"carpeta":1,"inv":"2-115361","fam":"Incubadoras
 //==============================================================
 // CONSTANTES & CATÁLOGOS
 //==============================================================
-const APP_VERSION = '0.18';
+const APP_VERSION = '0.19';
 const STORAGE_KEY = 'hhha_v1_data';
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 const MES_NUM = {Ene:0,Feb:1,Mar:2,Abr:3,May:4,Jun:5,Jul:6,Ago:7,Sep:8,Oct:9,Nov:10,Dic:11};
@@ -1940,7 +1947,7 @@ VIEWS.equipo = function(root, params){
   function renderTabBody(){
     tabsContent.innerHTML = '';
     if(tab==='resumen'){
-      tabsContent.appendChild(renderResumenEquipo(eq, ()=>{ tab=tab; renderTabBody(); }));
+      tabsContent.appendChild(renderResumenEquipo(eq, ()=>{ tab=tab; renderTabBody(); }, (k)=>{ tab=k; renderTabs(); renderTabBody(); }));
     } else if(tab==='datos'){
       tabsContent.appendChild(el('div',{class:'grid-2'},
         el('div',{class:'section'},
@@ -2156,7 +2163,7 @@ function renderCiclos(eq){
   );
 }
 
-function renderResumenEquipo(eq, refresh){
+function renderResumenEquipo(eq, refresh, setTab){
   const evs = eventosDe(eq.inv).slice().reverse();
   const ultimos = evs.slice(0,3);
   const pends = pendientesDe(eq.inv).filter(p => p.estado !== 'cerrado');
@@ -2207,7 +2214,7 @@ function renderResumenEquipo(eq, refresh){
     el('div',{class:'section resumen-block'},
       el('div',{class:'resumen-block-hd'},
         el('h3',{}, `Últimos eventos (${evs.length} total)`),
-        el('button',{class:'small ghost',onclick:()=>{tab='bitacora';renderTabs();renderTabBody();}}, 'Ver bitácora completa →')
+        el('button',{class:'small ghost',onclick:()=>setTab('bitacora')}, 'Ver bitácora completa →')
       ),
       ultimos.length === 0
         ? el('div',{class:'empty small'},'Sin eventos registrados.')
@@ -2226,7 +2233,7 @@ function renderResumenEquipo(eq, refresh){
     el('div',{class:'section resumen-block'},
       el('div',{class:'resumen-block-hd'},
         el('h3',{}, `Pendientes abiertos (${pends.length})`),
-        el('button',{class:'small ghost',onclick:()=>{tab='pendientes';renderTabs();renderTabBody();}}, pends.length>0?'Ver todos →':null)
+        el('button',{class:'small ghost',onclick:()=>setTab('pendientes')}, pends.length>0?'Ver todos →':null)
       ),
       pends.length === 0
         ? el('div',{class:'empty small'},'Sin pendientes abiertos.')
@@ -2240,7 +2247,7 @@ function renderResumenEquipo(eq, refresh){
     confl.length > 0 ? el('div',{class:'section resumen-block resumen-block-warn'},
       el('div',{class:'resumen-block-hd'},
         el('h3',{style:{color:'var(--noop)'}}, `⚠ ${confl.length} conflicto${confl.length>1?'s':''} con maestro`),
-        el('button',{class:'small primary',onclick:()=>{tab='conflictos';renderTabs();renderTabBody();}},'Resolver →')
+        el('button',{class:'small primary',onclick:()=>setTab('conflictos')},'Resolver →')
       ),
       el('div',{style:{fontSize:'13px',color:'var(--muted)'}},
         confl.slice(0,3).map(c => el('div',{}, '· '+nombreCampoConflicto(c)+' → maestro: '+(c.valorMaestro||'(vacío)')))
@@ -2250,7 +2257,7 @@ function renderResumenEquipo(eq, refresh){
     ciclos.length > 0 ? el('div',{class:'section resumen-block resumen-block-warn'},
       el('div',{class:'resumen-block-hd'},
         el('h3',{}, `Ciclos correctivos abiertos (${ciclos.length})`),
-        el('button',{class:'small ghost',onclick:()=>{tab='ciclos';renderTabs();renderTabBody();}}, 'Ver →')
+        el('button',{class:'small ghost',onclick:()=>setTab('ciclos')}, 'Ver →')
       ),
       el('div',{}, ...ciclos.map(c => el('div',{style:{fontSize:'13px',marginBottom:'4px'}},
         el('strong',{}, c.folio), ' · apertura: ', fmtFecha(c.fechaApertura),
