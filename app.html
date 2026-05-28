@@ -40,6 +40,23 @@ v0.2 [2026-05-28] Rediseño minimalista + tablas resumen clickeables.
   - Cada celda con valor navega a la vista correspondiente con filtros pre-aplicados.
   - Sistema de filtros vía params en cada vista (equipos, mp, pendientes, eventos).
   - Chip de filtros activos visible y limpiable en cada vista.
+v0.4 [2026-05-28] Fix fechas, MP rápida, export Excel, mejoras de tiempo.
+  - FIX CRÍTICO: bug de zona horaria al mostrar fechas. fmtFecha() ahora trata
+    "YYYY-MM-DD" como fecha local (no UTC), por lo que ya no aparece corrida
+    un día atrás en zonas UTC negativas.
+  - Exportar a Excel: nuevo botón "Excel" en el header. Genera .xlsx con 6 hojas:
+    Equipos, PMP_2026 (espejo del maestro), Registro_MP-2026 (espejo), Eventos,
+    Pendientes, Conflictos. Listo para pegar en la planilla oficial.
+  - MP rápida: nuevo botón "+ MP" en la ficha del equipo y en la vista MP del mes.
+    Modal mínimo con 4 campos (fecha, resultado, ejecutor, observación) que
+    recuerda el último ejecutor/resultado entre registros consecutivos.
+  - Click en una celda P programada y sin resultado en la matriz MP → abre MP rápida
+    con la fecha del mes pre-llenada.
+  - Auto-focus en el buscador de Equipos al entrar a la vista.
+  - Toast persiste 4 s (era 2.8 s) y muestra acción "Ver" cuando aplica.
+  - Persistencia de preferencias del usuario (último ejecutor, último resultado MP).
+  - Regresiones verificadas: conciliación con maestro, dashboard, 7 tipos de evento,
+    ciclo correctivo, pendientes auto C1, ficha completa, grabador, persistencia.
 v0.3 [2026-05-28] Conciliación con archivo maestro.
   - Nueva vista "Conciliación" + badge de conflictos pendientes en nav.
   - Importación del .xlsm/.xlsx del maestro vía SheetJS mini embebido inline (~250 KB),
@@ -257,9 +274,11 @@ table.data .num{font-variant-numeric:tabular-nums;text-align:right}
 .notice.danger{background:#fef2f2;color:#991b1b;border-color:#fecaca}
 
 /* Toast */
-.toast{position:fixed;bottom:22px;right:22px;background:var(--text);color:#fff;padding:11px 18px;border-radius:6px;font-size:13px;z-index:200;animation:slideUp .25s ease;max-width:380px;box-shadow:0 8px 20px rgba(0,0,0,.2)}
+.toast{position:fixed;bottom:22px;right:22px;background:var(--text);color:#fff;padding:11px 18px;border-radius:6px;font-size:13px;z-index:200;animation:slideUp .25s ease;max-width:420px;box-shadow:0 8px 20px rgba(0,0,0,.2);display:flex;align-items:center;gap:14px}
 .toast.error{background:var(--noop)}
 .toast.success{background:var(--op)}
+.toast-action{background:transparent;border:1px solid rgba(255,255,255,.4);color:#fff;padding:3px 10px;font-size:12px;border-radius:4px;cursor:pointer;font-weight:500}
+.toast-action:hover{background:rgba(255,255,255,.12)}
 @keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
 
 /* Recorder — sin cambios */
@@ -352,12 +371,13 @@ header.top nav button .nav-badge{display:inline-block;margin-left:6px;padding:0 
 <body>
 <div class="app">
   <header class="top">
-    <h1>HHHA <small>Equipos Críticos · v0.3</small></h1>
+    <h1>HHHA <small>Equipos Críticos · v0.4</small></h1>
     <nav id="nav"></nav>
     <div class="tools">
       <span class="user-tag">Cristian</span>
-      <button id="btn-export" title="Exportar datos">Exportar</button>
-      <button id="btn-import" title="Importar datos">Importar</button>
+      <button id="btn-excel" title="Exportar a Excel (.xlsx)">Excel</button>
+      <button id="btn-export" title="Exportar datos (JSON)">Backup</button>
+      <button id="btn-import" title="Importar backup JSON">Importar</button>
       <button id="btn-reset" title="Resetear a seed inicial">Reset</button>
     </div>
   </header>
@@ -394,7 +414,7 @@ const SEED = {"equipos":[{"id":1,"carpeta":1,"inv":"2-115361","fam":"Incubadoras
 //==============================================================
 // CONSTANTES & CATÁLOGOS
 //==============================================================
-const APP_VERSION = '0.3';
+const APP_VERSION = '0.4';
 const STORAGE_KEY = 'hhha_v1_data';
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 const MES_NUM = {Ene:0,Feb:1,Mar:2,Abr:3,May:4,Jun:5,Jul:6,Ago:7,Sep:8,Oct:9,Nov:10,Dic:11};
@@ -456,6 +476,7 @@ function migrate(d){
   // Migración no destructiva. Asegura estructuras nuevas sin perder datos.
   if(!d.conflictos) d.conflictos = [];
   if(!d.importaciones) d.importaciones = [];
+  if(!d.prefs) d.prefs = {};
   d.counters = d.counters || {};
   if(d.counters.conflicto == null) d.counters.conflicto = (d.conflictos.length||0) + 1;
   if(d.counters.importacion == null) d.counters.importacion = (d.importaciones.length||0) + 1;
@@ -515,7 +536,8 @@ function init(){
     asignacionesMP: {},
     correos: [],
     conflictos: [],
-    importaciones: []
+    importaciones: [],
+    prefs: {}
   };
 }
 function resetState(){
@@ -571,8 +593,8 @@ function recalcEstadoEquipo(equipo){
 }
 
 function diasEnEstado(equipo){
-  const desde = equipo.estadoDesde ? new Date(equipo.estadoDesde) : new Date();
-  return Math.max(0, Math.floor((new Date() - desde) / (1000*60*60*24)));
+  if(!equipo.estadoDesde) return 0;
+  return Math.max(0, diasEntreFechas(equipo.estadoDesde, hoyLocal()));
 }
 
 function mpDelMesEjecutada(equipo, year, month){
@@ -609,7 +631,7 @@ function cerrarCiclo(folio, fecha, motivo){
   const c = state.ciclos.find(x => x.folio === folio);
   if(!c) return;
   c.estado = 'cerrado';
-  c.fechaCierre = fecha || new Date().toISOString().slice(0,10);
+  c.fechaCierre = fecha || hoyLocal();
   if(motivo) c.motivoCierre = motivo;
   audit('ciclo', folio, 'estado', 'abierto', 'cerrado');
 }
@@ -620,7 +642,7 @@ function crearPendienteAuto(inv, tipo, desc, ejecutor, eventoOrigenId, fechaComp
     id: state.counters.pend++,
     inv, equipo: equipo ? equipo.equipo : '', servicio: equipo ? equipo.servicio : '',
     tipo, desc, ejecutor: ejecutor || null,
-    fechaCrea: new Date().toISOString().slice(0,10),
+    fechaCrea: hoyLocal(),
     fechaComp: fechaCompromiso || null,
     proxRecord: fechaCompromiso || null,
     fechaCierre: null,
@@ -676,7 +698,7 @@ function aplicarEfectosEvento(ev){
     // Si causal C1-C8 → pendiente reprogramación
     if(r && /^C[1-8]$/.test(r)){
       const c = CAUSALES[r];
-      const fechaComp = c.reprog30 ? new Date(Date.now() + 30*86400000).toISOString().slice(0,10) : null;
+      const fechaComp = c.reprog30 ? addDias(hoyLocal(),30) : null;
       crearPendienteAuto(ev.inv, 'reprogramacion',
         `Reprogramar MP por causal ${r} — ${c.desc}. ${c.reprog30?'Reprogramar dentro de 30 días.':'Esperar reintegro del equipo.'}`,
         ev.ejecutor, ev.id, fechaComp);
@@ -714,11 +736,46 @@ function el(tag, attrs={}, ...children){
   return n;
 }
 function fmt(v){ return v==null||v==='' ? '—' : v; }
-function fmtFecha(v){ if(!v) return '—'; const d=new Date(v); if(isNaN(d)) return v; return d.toLocaleDateString('es-CL'); }
-function toast(msg,type=''){
-  const t = el('div',{class:'toast '+type},msg);
+// FIX zona horaria: si el string es YYYY-MM-DD lo tratamos como fecha LOCAL,
+// no UTC, así no aparece corrida un día (Chile UTC-3/-4).
+function fmtFecha(v){
+  if(!v) return '—';
+  if(typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)){
+    const [y,m,d] = v.split('-').map(Number);
+    return String(d).padStart(2,'0')+'-'+String(m).padStart(2,'0')+'-'+y;
+  }
+  const d = new Date(v);
+  if(isNaN(d)) return v;
+  return d.toLocaleDateString('es-CL');
+}
+function hoyLocal(){
+  const d = new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+function addDias(fechaLocal, n){
+  if(!fechaLocal) fechaLocal = hoyLocal();
+  const [y,m,d] = fechaLocal.split('-').map(Number);
+  const dt = new Date(y, m-1, d + n);
+  return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');
+}
+function diasEntreFechas(a, b){
+  // Recibe dos YYYY-MM-DD locales y devuelve días enteros (b - a).
+  if(!a) return 0;
+  const [ay,am,ad] = a.split('-').map(Number);
+  const dA = new Date(ay, am-1, ad);
+  const dB = b ? (()=>{const [y,m,d]=b.split('-').map(Number); return new Date(y,m-1,d)})() : new Date();
+  return Math.floor((dB - dA) / 86400000);
+}
+function getPref(k, def){ return (state.prefs && state.prefs[k]) || def; }
+function setPref(k, v){ state.prefs = state.prefs || {}; state.prefs[k] = v; }
+function toast(msg, type='', action){
+  const t = el('div',{class:'toast '+type});
+  t.appendChild(el('span',{}, msg));
+  if(action){
+    t.appendChild(el('button',{class:'toast-action', onclick:()=>{ action.fn(); t.remove(); }}, action.label));
+  }
   $('#toast-root').appendChild(t);
-  setTimeout(()=>t.remove(),2800);
+  setTimeout(()=>t.remove(), 4000);
 }
 function badgeEstado(estado){
   const cls = {operativo:'op',no_operativo:'noop',en_servicio_tecnico:'st',baja:'baja'}[estado] || '';
@@ -898,7 +955,7 @@ function renderSumMPAnual(year){
 // ====== Tabla resumen: equipos por servicio × estado ======
 function renderSumServicios(){
   const servicios = [...new Set(state.equipos.map(e=>e.servicio).filter(Boolean))].sort();
-  const today = new Date().toISOString().slice(0,10);
+  const today = hoyLocal();
   const rows = servicios.map(s => {
     const eqs = state.equipos.filter(e => e.servicio === s);
     const op = eqs.filter(e => e.estado === 'operativo').length;
@@ -1195,6 +1252,7 @@ VIEWS.equipos = function(root, params){
     )
   ));
   render();
+  setTimeout(()=>search.focus(), 50);
 };
 
 //---------------- EQUIPO (ficha) ----------------
@@ -1270,7 +1328,8 @@ VIEWS.equipo = function(root, params){
         el('h2',{style:{display:'inline-block',marginLeft:'8px'}},`${eq.equipo} · ${eq.inv}`)
       ),
       el('div',{style:{display:'flex',gap:'6px'}},
-        el('button',{class:'primary',onclick:()=>nuevoEvento({invDefault:eq.inv})},'+ Evento'),
+        el('button',{class:'primary',onclick:()=>mpRapida({invDefault:eq.inv})},'+ MP'),
+        el('button',{onclick:()=>nuevoEvento({invDefault:eq.inv})},'+ Evento'),
         el('button',{onclick:()=>nuevoPendiente({invDefault:eq.inv})},'+ Pendiente'),
         eq.estado !== 'baja' ? el('button',{class:'danger',onclick:()=>darDeBaja(eq)},'Dar de baja') : null
       )
@@ -1297,16 +1356,23 @@ function renderMatrizMP(eq){
   };
   const trP = el('tr',{}, el('td',{class:'lbl-row'},'P (Programación)'));
   const trR = el('tr',{}, el('td',{class:'lbl-row'},'R (Resultado)'));
-  MESES.forEach(m => {
+  const year = new Date().getFullYear();
+  MESES.forEach((m, idx) => {
     const p = (eq.prog||{})[m] || '';
     const r = ((eq.registro||{})[m]||{}).R || '';
     const conflP = celdaTieneConflicto(eq.inv, m, 'P');
     const conflR = celdaTieneConflicto(eq.inv, m, 'R');
-    const tdP = el('td',{class:cellClass(p)+(conflP?' has-conflict':''), title: conflP?'Conflicto con maestro: '+(conflP.valorMaestro||'(vacío)'):''}, p||'');
+    const tdP = el('td',{class:cellClass(p)+(conflP?' has-conflict':''), title: conflP?'Conflicto con maestro: '+(conflP.valorMaestro||'(vacío)'):(p && !r ? 'Click para registrar MP rápida en '+m : '')}, p||'');
     const tdR = el('td',{class:cellClass(r)+(conflR?' has-conflict':''), title: conflR?'Conflicto con maestro: '+(conflR.valorMaestro||'(vacío)'):''}, r||'');
-    if(conflP) tdP.onclick = ()=>navigate('conciliacion');
+    if(conflP){
+      tdP.onclick = ()=>navigate('conciliacion');
+      tdP.style.cursor = 'pointer';
+    } else if(p && !r){
+      const fechaSug = year+'-'+String(idx+1).padStart(2,'0')+'-15';
+      tdP.onclick = ()=>mpRapida({invDefault:eq.inv, fechaDefault: fechaSug});
+      tdP.style.cursor = 'pointer';
+    }
     if(conflR) tdR.onclick = ()=>navigate('conciliacion');
-    if(conflP) tdP.style.cursor = 'pointer';
     if(conflR) tdR.style.cursor = 'pointer';
     trP.appendChild(tdP);
     trR.appendChild(tdR);
@@ -1489,7 +1555,7 @@ VIEWS.mp = function(root, params){
         el('td',{}, selA),
         el('td',{}, ejecutada ? el('span',{class:'badge mp-si'},'Ejecutada') : el('span',{class:'badge mp-no'},'Pendiente')),
         el('td',{class:'actions'},
-          el('button',{class:'small primary',onclick:()=>nuevoEvento({invDefault:eq.inv, tipoDefault:'Mantención preventiva', fechaDefault:`${year}-${String(monthIdx+1).padStart(2,'0')}-15`})}, ejecutada?'+ MP':'Registrar MP'),
+          el('button',{class:'small primary',onclick:()=>mpRapida({invDefault:eq.inv, fechaDefault:`${year}-${String(monthIdx+1).padStart(2,'0')}-15`})}, ejecutada?'+ MP':'Registrar MP'),
           el('button',{class:'small ghost',onclick:()=>navigate('equipo',{inv:eq.inv})},'Ficha')
         )
       ));
@@ -1633,7 +1699,7 @@ VIEWS.pendientes = function(root, params){
 
 function renderPendientesTabla(list){
   if(list.length === 0) return el('div',{class:'empty small'},'Sin pendientes.');
-  const today = new Date().toISOString().slice(0,10);
+  const today = hoyLocal();
   return el('div',{style:{overflow:'auto'}},
     el('table',{class:'data'},
       el('thead',{}, el('tr',{}, ['Equipo','Tipo','Descripción','Ejecutor','Compromiso','Estado','Acciones'].map(h=>el('th',{},h)))),
@@ -2014,7 +2080,7 @@ function resolverConflicto(c, accion, valorManual){
         servicio:null, unidad:null, ubic:null, fam:null,
         marca:null, modelo:null, serie:null, ano:null, vur:null, clasif:null, freq:null,
         estado:'operativo', subestado:null,
-        estadoDesde: new Date().toISOString().slice(0,10),
+        estadoDesde: hoyLocal(),
         prog: (datos.pmp && datos.pmp.prog) || {},
         registro: (datos.reg && datos.reg.reg) || {}
       };
@@ -2032,7 +2098,7 @@ function resolverConflicto(c, accion, valorManual){
       // El maestro no lo tiene → dar de baja en el programa
       if(eq){
         eq.estado = 'baja';
-        eq.estadoDesde = new Date().toISOString().slice(0,10);
+        eq.estadoDesde = hoyLocal();
         audit('equipo', c.inv, 'baja_por_conciliacion', null, 'baja');
       }
       c.estado = 'resuelto_maestro';
@@ -2295,6 +2361,81 @@ function estadoConflictoLabel(e){
 }
 
 //==============================================================
+// MP RÁPIDA — modal mínimo (4 campos), recuerda último ejecutor y resultado
+//==============================================================
+function mpRapida(opts){
+  const eq = findEquipo(opts.invDefault);
+  if(!eq){ toast('Equipo no encontrado','error'); return; }
+
+  const fecha = el('input',{type:'date', value: opts.fechaDefault || hoyLocal()});
+  const resultado = el('select',{},
+    ...['Si','C1','C2','C3','C4','C5','C6','C7','C8','FS','Baja','NU','No'].map(x =>
+      el('option',{value:x, selected: x === getPref('ultimoResultadoMP','Si') ? 'selected' : false}, x))
+  );
+  resultado.value = getPref('ultimoResultadoMP','Si');
+  const ejecutor = el('select',{},
+    el('option',{value:''},'—'),
+    ...EJECUTORES.map(x => el('option',{value:x, selected: x === getPref('ultimoEjecutor','') ? 'selected' : false}, x))
+  );
+  ejecutor.value = getPref('ultimoEjecutor','');
+  const obs = el('textarea',{placeholder:'Observación (opcional)'});
+
+  function guardar(continuar){
+    if(!fecha.value){ toast('Fecha requerida','error'); return; }
+    if(!ejecutor.value){ toast('Selecciona ejecutor','error'); return; }
+    const ev = {
+      id: state.counters.evento++,
+      inv: eq.inv, equipo: eq.equipo, servicio: eq.servicio, fam: eq.fam,
+      tipo: 'Mantención preventiva',
+      fecha: fecha.value, fechaReg: hoyLocal(),
+      resultado: resultado.value,
+      ejecutor: ejecutor.value,
+      estado: resultado.value === 'Si' ? 'operativo' : resultado.value === 'Baja' ? 'baja' : (eq.estado || 'operativo'),
+      obs: obs.value || null,
+      oficial: 'No',
+      anulado: false,
+      creadoPor: 'Cristian',
+      ts: new Date().toISOString()
+    };
+    state.eventos.push(ev);
+    aplicarEfectosEvento(ev);
+    audit('evento', ev.id, 'creado', null, 'MP rápida');
+    setPref('ultimoEjecutor', ejecutor.value);
+    setPref('ultimoResultadoMP', resultado.value);
+    save();
+    closeModal();
+    toast(`MP registrada · ${eq.inv} · ${fmtFecha(ev.fecha)} · ${ev.resultado}`, 'success',
+      {label:'Ver', fn:()=>navigate('equipo',{inv:eq.inv})});
+    if(continuar){
+      // Mantiene el flujo: vuelve a Equipos para registrar la siguiente
+      navigate('equipos');
+    } else if(currentView === 'equipo'){
+      navigate('equipo',{inv:eq.inv});
+    } else {
+      navigate(currentView, viewParams);
+    }
+  }
+
+  modal({title:`MP rápida · ${eq.inv} · ${eq.equipo}`, body: el('div',{},
+    el('div',{class:'subtitle',style:{marginBottom:'14px'}}, (eq.servicio||'') + ' · ' + (eq.ubic||'')),
+    el('div',{class:'grid-2'},
+      formField('Fecha de la MP', fecha),
+      formField('Resultado', resultado)
+    ),
+    formField('Ejecutor', ejecutor),
+    formField('Observación', obs),
+    el('div',{class:'notice info',style:{marginTop:'14px'}},
+      'Se guardará como borrador. Recuerda el último ejecutor y resultado para los siguientes registros.')
+  ), footer:[
+    el('button',{onclick:closeModal},'Cancelar'),
+    el('button',{onclick:()=>guardar(true), class:'primary'},'Guardar y siguiente'),
+    el('button',{class:'primary',onclick:()=>guardar(false)},'Guardar')
+  ]});
+  // Autofocus en fecha si el equipo cambió, o en el siguiente campo si todo viene precargado
+  setTimeout(()=> (ejecutor.value ? obs : fecha).focus(), 80);
+}
+
+//==============================================================
 // FORMULARIO EVENTO
 //==============================================================
 function nuevoEvento(opts){
@@ -2325,7 +2466,7 @@ function nuevoEvento(opts){
     // Campos según tipo
     const campos = el('div',{});
     if(tipo){
-      const today = new Date().toISOString().slice(0,10);
+      const today = hoyLocal();
       const fecha = el('input',{type:'date',value:opts.fechaDefault||today});
       const obs = el('textarea',{placeholder:'Observación / descripción / informe…'});
       const ejecutor = el('select',{}, el('option',{value:''},'—'), ...EJECUTORES.map(x=>el('option',{value:x},x)));
@@ -2441,7 +2582,7 @@ function nuevoEvento(opts){
         const ev = {
           id: state.counters.evento++,
           inv: invSel, equipo: eq.equipo, servicio: eq.servicio, fam: eq.fam,
-          tipo, fecha: fecha.value, fechaReg: new Date().toISOString().slice(0,10),
+          tipo, fecha: fecha.value, fechaReg: hoyLocal(),
           ejecutor: ejecutor.value || null,
           obs: obs.value || null,
           oficial: oficial.value,
@@ -2593,7 +2734,7 @@ function nuevoPendiente(opts){
         inv, equipo: eq.equipo, servicio: eq.servicio,
         tipo: tipo.value, desc: desc.value.trim(),
         ejecutor: ejec.value||null,
-        fechaCrea: new Date().toISOString().slice(0,10),
+        fechaCrea: hoyLocal(),
         fechaComp: fComp.value||null, proxRecord: fRec.value||null,
         fechaCierre:null, estado:'abierto', origen:'manual',
         seguimientos:[], tareas:[], anulado:false
@@ -2625,14 +2766,14 @@ function abrirPendiente(p){
     else tareasBox.appendChild(el('div',{}, ...ts.map(t => el('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'5px 0'}},
       el('input',{type:'checkbox',checked:t.estado==='cerrado'?'checked':false, style:{width:'auto'},onchange:e=>{
         t.estado = e.target.checked ? 'cerrado' : 'abierto';
-        if(e.target.checked) t.fechaCierre = new Date().toISOString().slice(0,10);
+        if(e.target.checked) t.fechaCierre = hoyLocal();
         audit('tarea',t.id,'estado',t.estado==='cerrado'?'abierto':'cerrado',t.estado);
         save();
         // Si todas cerradas → sugerir cerrar pendiente
         const todasCerradas = state.tareas.filter(x=>x.pendId===p.id).every(x=>x.estado==='cerrado');
         if(todasCerradas && state.tareas.filter(x=>x.pendId===p.id).length>0 && p.estado!=='cerrado'){
           if(confirm('Todas las tareas están cerradas. ¿Cerrar el pendiente?')){
-            p.estado = 'cerrado'; p.fechaCierre = new Date().toISOString().slice(0,10);
+            p.estado = 'cerrado'; p.fechaCierre = hoyLocal();
             save(); closeModal(); navigate(currentView,viewParams);
           }
         }
@@ -2667,7 +2808,7 @@ function abrirPendiente(p){
   const nuevoSegTxt = el('input',{type:'text',placeholder:'Agregar seguimiento (Enter para guardar)…',onkeydown:e=>{
     if(e.key==='Enter' && e.target.value.trim()){
       p.seguimientos = p.seguimientos||[];
-      p.seguimientos.push({autor:'Cristian',fecha:new Date().toISOString().slice(0,10),texto:e.target.value.trim()});
+      p.seguimientos.push({autor:'Cristian',fecha:hoyLocal(),texto:e.target.value.trim()});
       save();
       e.target.value='';
       renderSeg();
@@ -2701,7 +2842,7 @@ function abrirPendiente(p){
       p.desc = desc.value;
       p.fechaComp = fComp.value||null;
       p.proxRecord = fRec.value||null;
-      if(p.estado==='cerrado' && !p.fechaCierre) p.fechaCierre = new Date().toISOString().slice(0,10);
+      if(p.estado==='cerrado' && !p.fechaCierre) p.fechaCierre = hoyLocal();
       save(); closeModal();
       toast('Pendiente actualizado','success');
       navigate(currentView,viewParams);
@@ -2712,7 +2853,7 @@ function abrirPendiente(p){
 function cerrarPendiente(p){
   const txt = prompt('Comentario de cierre (opcional):');
   p.estado = 'cerrado';
-  p.fechaCierre = new Date().toISOString().slice(0,10);
+  p.fechaCierre = hoyLocal();
   if(txt){
     p.seguimientos = p.seguimientos||[];
     p.seguimientos.push({autor:'Cristian',fecha:p.fechaCierre,texto:'Cierre: '+txt});
@@ -2726,7 +2867,7 @@ function cerrarPendiente(p){
 function cerrarCicloManual(c){
   const motivo = prompt('Justificación del cierre manual:');
   if(!motivo) return;
-  cerrarCiclo(c.folio, new Date().toISOString().slice(0,10), motivo);
+  cerrarCiclo(c.folio, hoyLocal(), motivo);
   save();
   toast('Ciclo cerrado','success');
   navigate(currentView,viewParams);
@@ -2735,7 +2876,7 @@ function cerrarCicloManual(c){
 function darDeBaja(eq){
   const motivo = prompt('Motivo de la baja:');
   if(!motivo) return;
-  const fecha = new Date().toISOString().slice(0,10);
+  const fecha = hoyLocal();
   // Evento informativo
   const ev = {
     id: state.counters.evento++, inv:eq.inv, equipo:eq.equipo, servicio:eq.servicio,
@@ -2773,10 +2914,113 @@ function exportData(){
   const data = JSON.stringify(state,null,2);
   const blob = new Blob([data],{type:'application/json'});
   const url = URL.createObjectURL(blob);
-  const a = el('a',{href:url,download:'hhha-data-'+new Date().toISOString().slice(0,10)+'.json'});
+  const a = el('a',{href:url,download:'hhha-data-'+hoyLocal()+'.json'});
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
-  toast('Datos exportados','success');
+  toast('Backup JSON exportado','success');
+}
+
+function exportExcel(){
+  if(typeof XLSX === 'undefined'){ toast('Parser Excel no disponible','error'); return; }
+  state.equipos.forEach(recalcEstadoEquipo);
+  const wb = XLSX.utils.book_new();
+  const year = new Date().getFullYear();
+
+  // 1. Equipos (hoja simple)
+  const equiposRows = state.equipos.map(e => ({
+    'N° Inv.': e.inv, 'N° Carpeta': e.carpeta||'', 'Serie': e.serie||'',
+    'Familia': e.fam||'', 'Equipo': e.equipo||'', 'Marca': e.marca||'', 'Modelo': e.modelo||'',
+    'Servicio': e.servicio||'', 'Unidad': e.unidad||'', 'Ubicación': e.ubic||'',
+    'Procedencia': e.proc||'', 'Año': e.ano||'', 'VUR': e.vur||'',
+    'Clasificación': e.clasif||'', 'Frecuencia MP': e.freq||'',
+    'Estado': ESTADO_LABEL[e.estado]||e.estado, 'Días en estado': diasEnEstado(e),
+    'Pendientes abiertos': pendientesDe(e.inv).filter(p=>p.estado!=='cerrado').length,
+    'Ciclo abierto': ciclosAbiertosDe(e.inv).length > 0 ? 'Sí' : 'No'
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(equiposRows), 'Equipos');
+
+  // 2. PMP_AAAA — espejo del maestro
+  const pmpHeader = ['Fam','ID','N° Carpeta','N° Inventario','Equipo','Servicio','Unidad','Ubicación','Procedencia','Marca','Modelo','Serie','Año Instalación','Vida Útil Residual','Clasificación','ENU / Baja','Observación','Frecuencia MP','Responsable MP',...MESES];
+  const pmpData = [pmpHeader];
+  state.equipos.forEach((e, i) => {
+    const row = [e.fam||'', i+1, e.carpeta||'', e.inv, e.equipo||'', e.servicio||'', e.unidad||'', e.ubic||'', e.proc||'', e.marca||'', e.modelo||'', e.serie||'', e.ano||'', e.vur||'', e.clasif||'', e.enu||'', '', e.freq||'', ''];
+    MESES.forEach(m => row.push((e.prog||{})[m] || ''));
+    pmpData.push(row);
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(pmpData), `PMP_${year}`);
+
+  // 3. Registro_MP-AAAA — espejo con P y R por mes
+  const regHeader1 = ['','ID','N° Carpeta','N° Inventario','Equipo','Servicio','Unidad','Ubicación','Procedencia','Marca','Modelo','Serie','Año Instalación','Vida Útil Residual','Clasificación','ENU / Baja','Observación','Frecuencia MP','Responsable MP'];
+  MESES.forEach(()=>{ regHeader1.push('','') });
+  const regHeader2 = Array(19).fill('');
+  MESES.forEach(m=>{ regHeader2.push('P','R') });
+  // Encabezado de meses en fila superior
+  const regHeaderMonths = Array(19).fill('');
+  MESES.forEach(m => { regHeaderMonths.push(m,''); });
+  const regData = [regHeaderMonths, regHeader2];
+  state.equipos.forEach((e, i) => {
+    const row = ['', i+1, e.carpeta||'', e.inv, e.equipo||'', e.servicio||'', e.unidad||'', e.ubic||'', e.proc||'', e.marca||'', e.modelo||'', e.serie||'', e.ano||'', e.vur||'', e.clasif||'', e.enu||'', '', e.freq||'', ''];
+    MESES.forEach(m => {
+      const reg = (e.registro||{})[m] || {};
+      const prog = (e.prog||{})[m] || '';
+      row.push(reg.P || prog || '', reg.R || '');
+    });
+    regData.push(row);
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(regData), `Registro_MP-${year}`);
+
+  // 4. Eventos
+  const evRows = state.eventos.filter(e=>!e.anulado).map(e => ({
+    'ID': e.id, 'Fecha': fmtFecha(e.fecha), 'Fecha registro': fmtFecha(e.fechaReg),
+    'N° Inv.': e.inv, 'Equipo': e.equipo||'', 'Servicio': e.servicio||'',
+    'Tipo': e.tipo, 'Resultado': e.resultado||'', 'Estado equipo': e.estado||'',
+    'Ejecutor': e.ejecutor||'', 'Folio SIGEM': e.folio||'',
+    'N° Envío': e.nEnvio||'', 'N° OC': e.nOC||'', 'N° Cotización': e.nCotiz||'',
+    'Empresa': e.empresa||'', 'Técnico': e.tecnico||'',
+    'Observación': e.obs||'', 'Oficial': e.oficial||'No'
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(evRows), 'Eventos');
+
+  // 5. Pendientes
+  const pendRows = state.pendientes.filter(p=>!p.anulado).map(p => ({
+    'ID': p.id, 'N° Inv.': p.inv, 'Equipo': p.equipo||'', 'Servicio': p.servicio||'',
+    'Tipo': TIPO_PENDIENTE[p.tipo]||p.tipo, 'Descripción': p.desc||'',
+    'Ejecutor': p.ejecutor||'',
+    'Fecha creación': fmtFecha(p.fechaCrea), 'Fecha compromiso': fmtFecha(p.fechaComp),
+    'Fecha cierre': fmtFecha(p.fechaCierre), 'Estado': p.estado, 'Origen': p.origen||''
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pendRows), 'Pendientes');
+
+  // 6. Conflictos (si hay)
+  if(state.conflictos && state.conflictos.length > 0){
+    const confRows = state.conflictos.map(c => ({
+      'ID': c.id, 'Tipo': c.tipo, 'N° Inv.': c.inv, 'Estado': c.estado,
+      'Hoja': c.hoja||'', 'Mes': c.mes||'', 'Campo': c.campo||'',
+      'Valor programa': c.valorPrograma||'', 'Valor maestro': c.valorMaestro||'',
+      'Detectado': c.fechaDeteccion ? fmtFecha(c.fechaDeteccion.slice(0,10)) : '',
+      'Resuelto': c.fechaResolucion ? fmtFecha(c.fechaResolucion.slice(0,10)) : '',
+      'Acción aplicada': c.accionAplicada||'', 'Valor final': c.resolucionValor||''
+    }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(confRows), 'Conflictos');
+  }
+
+  // 7. Ciclos correctivos
+  if(state.ciclos && state.ciclos.length > 0){
+    const cicRows = state.ciclos.map(c => ({
+      'Folio SIGEM': c.folio, 'N° Inv.': c.inv, 'Estado': c.estado,
+      'Apertura': fmtFecha(c.fechaApertura), 'Cierre': fmtFecha(c.fechaCierre),
+      'Ingeniero asignado': c.ingenieroAsignado||'', 'Descripción inicial': c.descripcionInicial||''
+    }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(cicRows), 'Ciclos correctivos');
+  }
+
+  const wbout = XLSX.write(wb, {bookType:'xlsx', type:'array'});
+  const blob = new Blob([wbout], {type:'application/octet-stream'});
+  const url = URL.createObjectURL(blob);
+  const a = el('a',{href:url, download:`hhha-export-${hoyLocal()}.xlsx`});
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+  toast('Excel exportado · '+wb.SheetNames.length+' hojas','success');
 }
 function importData(){
   const input = el('input',{type:'file',accept:'application/json',style:{display:'none'},onchange:async e=>{
@@ -3039,6 +3283,7 @@ function bootstrap(){
   }
 
   buildNav();
+  $('#btn-excel').onclick = exportExcel;
   $('#btn-export').onclick = exportData;
   $('#btn-import').onclick = importData;
   $('#btn-reset').onclick = resetState;
