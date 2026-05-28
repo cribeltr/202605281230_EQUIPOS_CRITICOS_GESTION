@@ -40,6 +40,20 @@ v0.2 [2026-05-28] Rediseño minimalista + tablas resumen clickeables.
   - Cada celda con valor navega a la vista correspondiente con filtros pre-aplicados.
   - Sistema de filtros vía params en cada vista (equipos, mp, pendientes, eventos).
   - Chip de filtros activos visible y limpiable en cada vista.
+v0.5 [2026-05-28] Protección anti-pérdida de datos.
+  - Banner de bienvenida en el Dashboard cuando se detecta state "fresh"
+    (sin eventos del usuario sobre el seed) con drop-zone integrada para
+    importar backup JSON al instante.
+  - Indicador en el header: nº de eventos del usuario y fecha de la última
+    actualización, con tooltip explicando dónde está el localStorage.
+  - Auto-backup: cada 10 cambios significativos (eventos/pendientes/MPs/
+    conflictos resueltos) muestra toast persistente "Backup recomendado"
+    con botón directo de descarga.
+  - Drop-zone para importar visible también en la pantalla vacía.
+  - Mensaje educativo al detectar pérdida: explica la limitación de localStorage
+    per-file de Chrome (mover el archivo a otra carpeta = otro storage) y
+    recomienda exportar al cerrar la sesión.
+  - Migración no-destructiva v0.4 → v0.5 (sin cambios estructurales).
 v0.4 [2026-05-28] Fix fechas, MP rápida, export Excel, mejoras de tiempo.
   - FIX CRÍTICO: bug de zona horaria al mostrar fechas. fmtFecha() ahora trata
     "YYYY-MM-DD" como fecha local (no UTC), por lo que ya no aparece corrida
@@ -353,6 +367,27 @@ header.top nav button .nav-badge{display:inline-block;margin-left:6px;padding:0 
 .imp-progress .step.done{color:var(--op)}
 .imp-progress .step.error{color:var(--noop)}
 
+/* State indicator en header */
+.state-indicator{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;cursor:help;padding:3px 7px;border-radius:99px;background:var(--soft);border:1px solid var(--border)}
+.state-indicator.fresh{color:var(--st);border-color:#ecd4a3;background:#fdf6e8}
+.state-indicator.unsaved{color:var(--noop);border-color:#f0c5c1;background:#fdf3f2}
+
+/* Welcome banner */
+.welcome-banner{background:#fef9c3;border:1px solid #fde68a;border-radius:6px;padding:18px 20px;margin-bottom:24px;display:flex;gap:18px;align-items:start}
+.welcome-banner .icon{font-size:28px;line-height:1;flex-shrink:0}
+.welcome-banner .content{flex:1}
+.welcome-banner h3{margin:0 0 6px;font-size:14px;color:#854d0e;text-transform:none;letter-spacing:0;font-weight:600}
+.welcome-banner p{margin:0 0 12px;font-size:13px;color:#854d0e;line-height:1.5}
+.welcome-banner .mini-drop{border:1.5px dashed #d4a72c;background:#fffbeb;padding:14px;border-radius:6px;cursor:pointer;text-align:center;transition:all .15s}
+.welcome-banner .mini-drop:hover{background:#fef3c7;border-color:#a16207}
+.welcome-banner .mini-drop strong{display:block;color:#854d0e;font-size:13px;margin-bottom:2px}
+.welcome-banner .mini-drop small{color:#a16207;font-size:11px}
+.welcome-banner .dismiss{background:transparent;border:none;color:#a16207;font-size:11px;padding:0;cursor:pointer;text-decoration:underline}
+.welcome-banner .dismiss:hover{color:#854d0e}
+
+/* Backup pendiente */
+.toast.warn-backup{background:var(--st);color:#fff}
+
 @media (max-width:900px){
   main{padding:18px 16px 60px}
   .grid-2,.grid-3{grid-template-columns:1fr}
@@ -371,12 +406,13 @@ header.top nav button .nav-badge{display:inline-block;margin-left:6px;padding:0 
 <body>
 <div class="app">
   <header class="top">
-    <h1>HHHA <small>Equipos Críticos · v0.4</small></h1>
+    <h1>HHHA <small>Equipos Críticos · v0.5</small></h1>
     <nav id="nav"></nav>
     <div class="tools">
+      <span id="state-indicator" class="state-indicator" title="">—</span>
       <span class="user-tag">Cristian</span>
       <button id="btn-excel" title="Exportar a Excel (.xlsx)">Excel</button>
-      <button id="btn-export" title="Exportar datos (JSON)">Backup</button>
+      <button id="btn-export" title="Exportar backup JSON">Backup</button>
       <button id="btn-import" title="Importar backup JSON">Importar</button>
       <button id="btn-reset" title="Resetear a seed inicial">Reset</button>
     </div>
@@ -414,7 +450,7 @@ const SEED = {"equipos":[{"id":1,"carpeta":1,"inv":"2-115361","fam":"Incubadoras
 //==============================================================
 // CONSTANTES & CATÁLOGOS
 //==============================================================
-const APP_VERSION = '0.4';
+const APP_VERSION = '0.5';
 const STORAGE_KEY = 'hhha_v1_data';
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 const MES_NUM = {Ene:0,Feb:1,Mar:2,Abr:3,May:4,Jun:5,Jul:6,Ago:7,Sep:8,Oct:9,Nov:10,Dic:11};
@@ -483,13 +519,54 @@ function migrate(d){
   d.__v = APP_VERSION;
   return d;
 }
-function save(){
+function save(opts){
   state.__updated = new Date().toISOString();
+  const isInternal = opts && opts.internal;
+  if(!isInternal){
+    state.__userActions = (state.__userActions || 0) + 1;
+  }
   try{
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   }catch(e){
-    toast('Cuota localStorage excedida. Exporta y elimina adjuntos pesados.','error');
+    toast('Cuota de localStorage excedida. Descarga el backup ahora.', 'error',
+      {label:'Descargar', fn: exportData});
+    return;
   }
+  // Auto-backup recordatorio cada N cambios reales del usuario
+  if(!isInternal && state.__userActions > 0 && state.__userActions % 10 === 0){
+    toast(`Llevas ${state.__userActions} cambios. Recuerda descargar backup.`, 'warn-backup',
+      {label:'Descargar', fn: exportData});
+  }
+  // Si el banner welcome estaba visible y ya no aplica, quitarlo
+  if(!stateEsFresh()){
+    document.querySelectorAll('.welcome-banner').forEach(b => b.remove());
+  }
+  refreshStateIndicator();
+}
+
+// True si el state no tiene datos del usuario sobre el seed.
+function stateEsFresh(){
+  return state.eventos.length <= SEED.eventos.length &&
+         state.pendientes.length <= SEED.pendientes.length &&
+         (state.conflictos||[]).length === 0 &&
+         Object.keys(state.asignacionesMP||{}).length === 0;
+}
+
+function refreshStateIndicator(){
+  const ind = document.getElementById('state-indicator');
+  if(!ind) return;
+  const cnt = (state.__userActions || 0);
+  const upd = state.__updated ? new Date(state.__updated) : null;
+  const fresh = stateEsFresh();
+  const txt = fresh ? 'Sin cambios' : `${cnt} cambio${cnt!==1?'s':''}`;
+  const tip = fresh
+    ? 'No hay actividad del usuario. Si tenías datos antes, importa el backup JSON.'
+    : `${cnt} cambios desde el último arranque. Última actualización: ${upd ? upd.toLocaleString('es-CL') : '—'}. ` +
+      'Recuerda descargar backup periódicamente (Backup en este header). ' +
+      'IMPORTANTE: Chrome guarda los datos por ruta del archivo — si mueves app.html a otra carpeta, empieza vacío.';
+  ind.textContent = txt;
+  ind.title = tip;
+  ind.classList.toggle('fresh', fresh);
 }
 function init(){
   // Construye state inicial desde SEED
@@ -860,6 +937,7 @@ VIEWS.dashboard = function(root){
   root.appendChild(el('div',{class:'view'},
     el('h2',{},'Resumen general'),
     el('div',{class:'subtitle'}, today.toLocaleDateString('es-CL',{weekday:'long',day:'2-digit',month:'long',year:'numeric'})),
+    renderWelcomeBanner(),
     kpis,
     renderSumMPAnual(year),
     renderSumServicios(),
@@ -879,6 +957,51 @@ function kpiCell(lbl, val, onclick, cls){
   return el('div',{class:'kpi '+(cls||''),onclick},
     el('div',{class:'lbl'}, lbl),
     el('div',{class:'val'}, String(val))
+  );
+}
+
+function renderWelcomeBanner(){
+  // Solo mostrar si no se descartó y el state está fresco.
+  if(!stateEsFresh()) return null;
+  if(localStorage.getItem('hhha_welcome_dismissed') === '1') return null;
+
+  const fileInput = el('input',{type:'file',accept:'application/json',style:{display:'none'},onchange: async e=>{
+    const f = e.target.files[0]; if(!f) return;
+    try{
+      const txt = await f.text();
+      const data = JSON.parse(txt);
+      if(!data.__v) throw new Error('No parece un backup válido (falta __v).');
+      state = migrate(data);
+      save();
+      toast(`Backup importado · ${state.eventos.length} eventos, ${state.pendientes.length} pendientes`, 'success');
+      navigate('dashboard');
+    }catch(err){ toast('Error: '+err.message, 'error'); }
+  }});
+  const drop = el('div',{class:'mini-drop', onclick:()=>fileInput.click(),
+    ondragover: e=>{e.preventDefault();},
+    ondrop: e=>{e.preventDefault(); if(e.dataTransfer.files[0]) fileInput.onchange({target:{files:e.dataTransfer.files}});}
+  },
+    el('strong',{},'Importar backup JSON'),
+    el('small',{},'Click o arrastra tu archivo hhha-data-AAAAMMDD.json')
+  );
+
+  return el('div',{class:'welcome-banner'},
+    el('div',{class:'icon'}, '!'),
+    el('div',{class:'content'},
+      el('h3',{},'No detecto actividad del usuario en estos datos'),
+      el('p',{},
+        'El programa cargó el seed inicial (893 equipos, 55 eventos demo). Si ya habías registrado MPs antes y no las ves, ',
+        el('strong',{},'es muy probable que abriste el archivo desde otra ubicación.'),
+        ' Chrome guarda los datos por ruta de archivo, así que al moverlo a otra carpeta empieza vacío. Importa tu backup JSON para recuperar todo:'
+      ),
+      drop, fileInput,
+      el('div',{style:{marginTop:'10px'}},
+        el('button',{class:'dismiss',onclick:e=>{
+          localStorage.setItem('hhha_welcome_dismissed','1');
+          e.target.closest('.welcome-banner').remove();
+        }},'Descartar este aviso (no volverá a aparecer)')
+      )
+    )
   );
 }
 
@@ -3028,13 +3151,16 @@ function importData(){
     try{
       const txt = await f.text();
       const data = JSON.parse(txt);
-      if(!data.__v) throw new Error('Archivo no válido');
-      if(!confirm(`Importar datos? Versión ${data.__v}, ${data.equipos?.length||0} equipos, ${data.eventos?.length||0} eventos.`)) return;
-      state = data;
+      if(!data.__v) throw new Error('Archivo no válido (falta __v).');
+      const msg = `Importar backup?\n· Versión: ${data.__v}\n· Equipos: ${data.equipos?.length||0}\n· Eventos: ${data.eventos?.length||0}\n· Pendientes: ${data.pendientes?.length||0}\n· Conflictos: ${data.conflictos?.length||0}\n\nReemplazará los datos actuales.`;
+      if(!confirm(msg)) return;
+      state = migrate(data);
+      state.__userActions = state.__userActions || 0;
       save();
-      toast('Datos importados','success');
+      toast(`Importado · ${state.eventos.length} eventos`, 'success',
+        {label:'Ver', fn:()=>navigate('dashboard')});
       navigate('dashboard');
-    }catch(err){ toast('Error: '+err.message,'error'); }
+    }catch(err){ toast('Error al importar: '+err.message, 'error'); }
   }});
   document.body.appendChild(input); input.click(); setTimeout(()=>input.remove(),1000);
 }
@@ -3279,7 +3405,7 @@ function bootstrap(){
         if(c) { c.estado='cerrado'; c.fechaCierre = ev.fecha; }
       }
     });
-    save();
+    save({internal:true});
   }
 
   buildNav();
@@ -3288,6 +3414,7 @@ function bootstrap(){
   $('#btn-import').onclick = importData;
   $('#btn-reset').onclick = resetState;
   recorder.init();
+  refreshStateIndicator();
   navigate('dashboard');
 }
 document.addEventListener('DOMContentLoaded', bootstrap);
