@@ -42,6 +42,18 @@ v0.2 [2026-05-28] Rediseño minimalista + tablas resumen clickeables.
   - Cada celda con valor navega a la vista correspondiente con filtros pre-aplicados.
   - Sistema de filtros vía params en cada vista (equipos, mp, pendientes, eventos).
   - Chip de filtros activos visible y limpiable en cada vista.
+v0.22 [2026-05-28] Auditoría de diseño: iconografía unificada en botones.
+  - Gramática visual consistente:
+    · ➕ crear (MP, Evento, Pendiente, Registrar MP a todos, Nuevo pendiente)
+    · ⊘ destructivo (Anular, Dar de baja)
+    · ✓ confirmar/positivo (Oficializar, Aceptar maestro)
+    · ✗ rechazar (Mantener programa)
+    · ⏸ pausar (Posponer)
+    · ✎ editar
+    · 📊 Excel · 💾 Backup · 📥 Importar/Descargar · 📤 Subir · ↻ Reset
+    · 🔍 Buscar · 🌞🌙 Tema
+  - Tooltips informativos en botones de la ficha (qué hace cada acción).
+  - Botones de bitácora con iconos: ✓ Oficializar, ✎ Editar, ⊘ Anular.
 v0.21 [2026-05-28] Auto-completado en Conciliación: celdas vacías se llenan con datos del maestro.
   - Antes: cualquier diferencia generaba conflicto (con 894 equipos × 24 celdas
     inflaba la cola a >900).
@@ -724,16 +736,16 @@ header.top nav button .nav-badge{display:inline-block;margin-left:6px;padding:0 
 <body>
 <div class="app">
   <header class="top">
-    <h1>HHHA <small>Equipos Críticos · v0.21</small></h1>
+    <h1>HHHA <small>Equipos Críticos · v0.22</small></h1>
     <nav id="nav"></nav>
     <div class="tools">
       <span id="state-indicator" class="state-indicator" title="">—</span>
       <button id="btn-theme" title="Cambiar tema claro/oscuro" class="theme-btn">🌞</button>
       <span class="user-tag">Cristian</span>
-      <button id="btn-excel" title="Exportar a Excel (.xlsx)">Excel</button>
-      <button id="btn-export" title="Exportar backup JSON">Backup</button>
-      <button id="btn-import" title="Importar backup JSON">Importar</button>
-      <button id="btn-reset" title="Resetear a seed inicial">Reset</button>
+      <button id="btn-excel" title="Exportar a Excel (.xlsx)">📊 Excel</button>
+      <button id="btn-export" title="Exportar backup JSON">💾 Backup</button>
+      <button id="btn-import" title="Importar backup JSON">📥 Importar</button>
+      <button id="btn-reset" title="Resetear a seed inicial">↻ Reset</button>
     </div>
   </header>
   <main id="main"></main>
@@ -769,7 +781,7 @@ const SEED = {"equipos":[{"id":1,"carpeta":1,"inv":"2-115361","fam":"Incubadoras
 //==============================================================
 // CONSTANTES & CATÁLOGOS
 //==============================================================
-const APP_VERSION = '0.21';
+const APP_VERSION = '0.22';
 const STORAGE_KEY = 'hhha_v1_data';
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 const MES_NUM = {Ene:0,Feb:1,Mar:2,Abr:3,May:4,Jun:5,Jul:6,Ago:7,Sep:8,Oct:9,Nov:10,Dic:11};
@@ -2034,10 +2046,10 @@ VIEWS.equipo = function(root, params){
         evsHoyBanner
       ),
       el('div',{style:{display:'flex',gap:'6px'}},
-        el('button',{class:'primary',onclick:()=>mpRapida({invDefault:eq.inv})},'+ MP'),
-        el('button',{onclick:()=>nuevoEvento({invDefault:eq.inv})},'+ Evento'),
-        el('button',{onclick:()=>nuevoPendiente({invDefault:eq.inv})},'+ Pendiente'),
-        eq.estado !== 'baja' ? el('button',{class:'danger',onclick:()=>darDeBaja(eq)},'Dar de baja') : null
+        el('button',{class:'primary',onclick:()=>mpRapida({invDefault:eq.inv}),title:'Registrar Mantención Preventiva rápida'},'➕ MP'),
+        el('button',{onclick:()=>nuevoEvento({invDefault:eq.inv}),title:'Crear evento completo (7 tipos)'},'➕ Evento'),
+        el('button',{onclick:()=>nuevoPendiente({invDefault:eq.inv}),title:'Crear pendiente / tarea'},'➕ Pendiente'),
+        eq.estado !== 'baja' ? el('button',{class:'danger',onclick:()=>darDeBaja(eq),title:'Marcar equipo como baja'},'⊘ Dar de baja') : null
       )
     ),
     tabs, tabsContent
@@ -2157,9 +2169,9 @@ function renderBitacora(eq){
         ev.motivoAnulacion ? ' · Motivo: '+ev.motivoAnulacion : ''
       ) : null,
       !ev.anulado ? el('div',{style:{marginTop:'6px',display:'flex',gap:'5px'}},
-        ev.oficial !== 'Sí' ? el('button',{class:'small primary',onclick:()=>oficializarEvento(ev)},'Oficializar') : null,
-        el('button',{class:'small',onclick:()=>editarEvento(ev)},'Editar'),
-        el('button',{class:'small danger',onclick:()=>anularEvento(ev)},'Anular')
+        ev.oficial !== 'Sí' ? el('button',{class:'small primary',onclick:()=>oficializarEvento(ev),title:'Marcar como oficial'},'✓ Oficializar') : null,
+        el('button',{class:'small',onclick:()=>editarEvento(ev),title:'Editar campos básicos'},'✎ Editar'),
+        el('button',{class:'small danger',onclick:()=>anularEvento(ev),title:'Anular evento (revierte efectos)'},'⊘ Anular')
       ) : null
     )))
   );
@@ -2228,7 +2240,7 @@ function renderResumenEquipo(eq, refresh, setTab){
     el('div',{class:'section resumen-block'},
       el('div',{class:'resumen-block-hd'},
         el('h3',{},`Programación MP ${year}`),
-        el('button',{class:'small primary',onclick:()=>mpRapida({invDefault:eq.inv})}, '+ Registrar MP')
+        el('button',{class:'small primary',onclick:()=>mpRapida({invDefault:eq.inv})}, '➕ Registrar MP')
       ),
       el('div',{style:{overflowX:'auto'}}, matrizMini),
       el('div',{style:{fontSize:'11px',color:'var(--muted)',marginTop:'8px'}},
@@ -2348,7 +2360,7 @@ function renderPendientesEquipo(eq){
   const pends = pendientesDe(eq.inv).slice().sort((a,b)=> (a.fechaCrea||'').localeCompare(b.fechaCrea||''));
   if(pends.length===0) return el('div',{class:'empty'},'Sin pendientes.');
   return el('div',{},
-    el('div',{style:{textAlign:'right',marginBottom:'8px'}}, el('button',{class:'primary small',onclick:()=>nuevoPendiente({invDefault:eq.inv})},'+ Pendiente')),
+    el('div',{style:{textAlign:'right',marginBottom:'8px'}}, el('button',{class:'primary small',onclick:()=>nuevoPendiente({invDefault:eq.inv})},'➕ Pendiente')),
     el('div',{}, ...pends.map(p => el('div',{class:'section',style:{padding:'10px 14px',marginBottom:'8px'}},
       el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'start',gap:'10px'}},
         el('div',{style:{flex:'1'}},
@@ -2417,7 +2429,7 @@ VIEWS.mp = function(root, params){
     bulkBar.appendChild(el('span',{class:'bulk-count'}, `${seleccion.size} seleccionado${seleccion.size>1?'s':''}`));
     bulkBar.appendChild(el('button',{class:'small',onclick:()=>{seleccion.clear();render();}},'Limpiar selección'));
     bulkBar.appendChild(el('div',{style:{flex:'1'}}));
-    bulkBar.appendChild(el('button',{class:'small primary',onclick:()=>mpMasiva([...seleccion], year, monthIdx, ()=>{seleccion.clear();render();})}, '+ Registrar MP a todos'));
+    bulkBar.appendChild(el('button',{class:'small primary',onclick:()=>mpMasiva([...seleccion], year, monthIdx, ()=>{seleccion.clear();render();})}, '➕ Registrar MP a todos'));
     bulkBar.appendChild(el('button',{class:'small',onclick:()=>{
       const ej = prompt('Asignar a:\n'+EJECUTORES.map((e,i)=>(i+1)+'. '+e).join('\n')+'\n\nNúmero (1-11):');
       const idx = parseInt(ej) - 1;
@@ -2480,7 +2492,7 @@ VIEWS.mp = function(root, params){
         el('td',{}, selA),
         el('td',{}, ejecutada ? el('span',{class:'badge mp-si'},'Ejecutada') : el('span',{class:'badge mp-no'},'Pendiente')),
         el('td',{class:'actions'},
-          el('button',{class:'small primary',onclick:()=>mpRapida({invDefault:eq.inv, fechaDefault:fechaSugeridaMP(year, monthIdx)})}, ejecutada?'+ MP':'Registrar MP'),
+          el('button',{class:'small primary',onclick:()=>mpRapida({invDefault:eq.inv, fechaDefault:fechaSugeridaMP(year, monthIdx)})}, ejecutada?'➕ MP':'➕ Registrar MP'),
           el('button',{class:'small ghost',onclick:()=>navigate('equipo',{inv:eq.inv})},'Ficha')
         )
       ));
@@ -2498,14 +2510,14 @@ VIEWS.mp = function(root, params){
   }},'☐ Seleccionar todos los visibles');
 
   // Botones plantilla
-  const btnDescargarPlantilla = el('button',{onclick:()=>descargarPlantillaMP(year, monthIdx)}, '↓ Descargar plantilla');
+  const btnDescargarPlantilla = el('button',{onclick:()=>descargarPlantillaMP(year, monthIdx), title:'Descargar plantilla Excel del mes'}, '📥 Descargar plantilla');
   const fileInputPlantilla = el('input',{type:'file',accept:'.xlsx',style:{display:'none'},onchange:async e=>{
     const f = e.target.files[0]; if(!f) return;
     await subirPlantillaMP(f, year, monthIdx);
     e.target.value = '';
     render();
   }});
-  const btnSubirPlantilla = el('button',{class:'primary',onclick:()=>fileInputPlantilla.click()}, '↑ Subir plantilla');
+  const btnSubirPlantilla = el('button',{class:'primary',onclick:()=>fileInputPlantilla.click(), title:'Subir plantilla con asignaciones llenadas'}, '📤 Subir plantilla');
 
   root.appendChild(el('div',{class:'view'},
     el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:'8px'}},
@@ -2636,7 +2648,7 @@ VIEWS.pendientes = function(root, params){
   root.appendChild(el('div',{class:'view'},
     el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'6px',flexWrap:'wrap',gap:'10px'}},
       el('h2',{},'Pendientes'),
-      el('button',{class:'primary',onclick:()=>nuevoPendiente({})},'+ Nuevo pendiente')
+      el('button',{class:'primary',onclick:()=>nuevoPendiente({})},'➕ Nuevo pendiente')
     ),
     el('div',{class:'subtitle'},'Gestiones, reprogramaciones de MP, documentos faltantes y recomendaciones.'),
     el('div',{class:'toolbar'}, el('div',{class:'grow'},search), selTipo, selEst, selExec, selServ),
@@ -2762,7 +2774,7 @@ VIEWS.eventos = function(root, params){
   root.appendChild(el('div',{class:'view'},
     el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'6px',flexWrap:'wrap',gap:'10px'}},
       el('h2',{},'Bitácora de eventos'),
-      el('button',{class:'primary',onclick:()=>nuevoEvento({})},'+ Nuevo evento')
+      el('button',{class:'primary',onclick:()=>nuevoEvento({})},'➕ Nuevo evento')
     ),
     el('div',{class:'subtitle'},'Todos los eventos registrados sobre los equipos (los 7 tipos). Click en una fila para abrir la ficha.'),
     el('div',{class:'toolbar'}, el('div',{class:'grow'},search), selTipo, selRes, selOficial),
@@ -5158,7 +5170,7 @@ function quickSearch(){
     else if(e.key === 'ArrowUp'){ e.preventDefault(); selected = Math.max(0, selected-1); render(); }
     else if(e.key === 'Enter' && filtered[selected]){ e.preventDefault(); open(filtered[selected].inv); }
   });
-  modal({title:'Buscar equipo (Ctrl+K)', body:el('div',{class:'quick-search'},
+  modal({title:'🔍 Buscar equipo (Ctrl+K)', body:el('div',{class:'quick-search'},
     input, results
   )});
   setTimeout(()=>{ input.focus(); render(); }, 50);
