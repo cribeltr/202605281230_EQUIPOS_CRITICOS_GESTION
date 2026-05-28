@@ -42,6 +42,11 @@ v0.2 [2026-05-28] Rediseño minimalista + tablas resumen clickeables.
   - Cada celda con valor navega a la vista correspondiente con filtros pre-aplicados.
   - Sistema de filtros vía params en cada vista (equipos, mp, pendientes, eventos).
   - Chip de filtros activos visible y limpiable en cada vista.
+v0.18 [2026-05-28] Dashboard: toggle "Por ejecutor / Por mes" en MP del mes.
+  - Nueva tabla "MP del año por mes" con 12 filas: Programadas, Asignadas,
+    Sin asignar, Ejecutadas, Pendientes, Cumplimiento %.
+  - Toggle en el header de la sección persiste en prefs.mpSumModo.
+  - Cada celda navega a MP del mes filtrada (mes + estadoMP/sinAsignar).
 v0.17 [2026-05-28] Resumen del equipo + buscador global Ctrl+K + confirmación Oficializar.
   - Pestaña "Resumen" como default al abrir la ficha de un equipo. Consolida:
     matriz MP mini, últimos 3 eventos con resultado/oficialidad, pendientes
@@ -532,6 +537,11 @@ header.top nav button .nav-badge{display:inline-block;margin-left:6px;padding:0 
 .conf-checkbox{padding:18px 8px 0 0;display:flex;align-items:flex-start;justify-content:center;min-width:32px}
 .conf-checkbox input[type=checkbox]{width:18px;height:18px;cursor:pointer;margin:0}
 .conf-row .conf-card{flex:1;margin-bottom:0}
+/* Toggle group para alternar vistas */
+.toggle-group{display:inline-flex;border:1px solid var(--border-strong);border-radius:4px;overflow:hidden}
+.toggle-group button{border:none!important;border-radius:0!important;padding:4px 10px!important;font-size:12px!important}
+.toggle-group button:first-child{border-right:1px solid var(--border-strong)!important}
+
 /* Quick search (Ctrl+K) */
 .quick-search{display:flex;flex-direction:column;gap:10px}
 .quick-search-input{font-size:16px;padding:12px 14px}
@@ -682,7 +692,7 @@ header.top nav button .nav-badge{display:inline-block;margin-left:6px;padding:0 
 <body>
 <div class="app">
   <header class="top">
-    <h1>HHHA <small>Equipos Críticos · v0.17</small></h1>
+    <h1>HHHA <small>Equipos Críticos · v0.18</small></h1>
     <nav id="nav"></nav>
     <div class="tools">
       <span id="state-indicator" class="state-indicator" title="">—</span>
@@ -727,7 +737,7 @@ const SEED = {"equipos":[{"id":1,"carpeta":1,"inv":"2-115361","fam":"Incubadoras
 //==============================================================
 // CONSTANTES & CATÁLOGOS
 //==============================================================
-const APP_VERSION = '0.17';
+const APP_VERSION = '0.18';
 const STORAGE_KEY = 'hhha_v1_data';
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 const MES_NUM = {Ene:0,Feb:1,Mar:2,Abr:3,May:4,Jun:5,Jul:6,Ago:7,Sep:8,Oct:9,Nov:10,Dic:11};
@@ -1363,7 +1373,7 @@ VIEWS.dashboard = function(root){
     kpis,
     renderSumMPAnual(year),
     renderSumServicios(),
-    renderSumEjecutoresMP(year, month),
+    renderSumMPDelMes(year, month),
     alertaDias.length > 0 ? renderSumAlertas(alertaDias) : null,
     pendAbiertos.length > 0 ? el('div',{class:'sum-section'},
       el('div',{class:'sum-section-hd'},
@@ -1562,7 +1572,100 @@ function renderSumServicios(){
 }
 
 // ====== Tabla resumen: MP del mes por ejecutor ======
-function renderSumEjecutoresMP(year, monthIdx){
+// Wrapper con toggle Por ejecutor / Por mes
+function renderSumMPDelMes(year, monthIdx){
+  const wrap = el('div',{class:'sum-section'});
+  const modo = {value: getPref('mpSumModo', 'ejecutor')};
+  function render(){
+    wrap.innerHTML = '';
+    const content = modo.value === 'mes'
+      ? renderSumMesesMP(year, true)
+      : renderSumEjecutoresMP(year, monthIdx, true);
+    // Header con toggle
+    const hd = el('div',{class:'sum-section-hd'},
+      el('h3',{}, content.title),
+      el('div',{style:{display:'flex',gap:'8px',alignItems:'center'}},
+        el('span',{class:'hint'}, content.hint),
+        el('div',{class:'toggle-group'},
+          el('button',{class:'small'+(modo.value==='ejecutor'?' primary':''),onclick:()=>{modo.value='ejecutor';setPref('mpSumModo','ejecutor');save({internal:true});render();}}, 'Por ejecutor'),
+          el('button',{class:'small'+(modo.value==='mes'?' primary':''),onclick:()=>{modo.value='mes';setPref('mpSumModo','mes');save({internal:true});render();}}, 'Por mes')
+        )
+      )
+    );
+    wrap.appendChild(hd);
+    wrap.appendChild(content.table);
+  }
+  render();
+  return wrap;
+}
+
+function renderSumMesesMP(year, returnParts){
+  // Por cada mes: asignadas, ejecutadas, pendientes, % cumplimiento
+  const rows = MESES.map((mes, monthIdx) => {
+    const keyMes = `${year}-${String(monthIdx+1).padStart(2,'0')}`;
+    const asignaciones = (state.asignacionesMP[keyMes]) || {};
+    const mpProgEquipos = state.equipos.filter(eq => eq.estado !== 'baja' && mpProgramadaEnMes(eq, mes));
+    const conAsig = mpProgEquipos.filter(eq => asignaciones[eq.inv]);
+    const ejecutadas = mpProgEquipos.filter(eq => mpDelMesEjecutada(eq, year, monthIdx)).length;
+    const asignadas = conAsig.length;
+    const sinAsignar = mpProgEquipos.length - asignadas;
+    const pendientes = mpProgEquipos.length - ejecutadas;
+    const pct = mpProgEquipos.length === 0 ? null : Math.round(ejecutadas / mpProgEquipos.length * 100);
+    return {mes, monthIdx, programadas: mpProgEquipos.length, asignadas, sinAsignar, ejecutadas, pendientes, pct};
+  });
+  const tot = rows.reduce((a,r)=>({programadas:a.programadas+r.programadas, asignadas:a.asignadas+r.asignadas, ejecutadas:a.ejecutadas+r.ejecutadas, pendientes:a.pendientes+r.pendientes}), {programadas:0,asignadas:0,ejecutadas:0,pendientes:0});
+  const pctTot = tot.programadas === 0 ? null : Math.round(tot.ejecutadas/tot.programadas*100);
+  function c(val, mIdx, params){
+    if(val === 0) return el('td',{class:'cell zero'}, '–');
+    return el('td',{class:'cell',onclick:()=>navigate('mp',{mes:MESES[mIdx], ...params})}, el('span',{class:'v'}, String(val)));
+  }
+  const table = el('table',{class:'sum-table'},
+    el('thead',{}, el('tr',{},
+      el('th',{},'Mes'),
+      el('th',{},'Programadas'),
+      el('th',{},'Asignadas'),
+      el('th',{},'Sin asignar'),
+      el('th',{},'Ejecutadas'),
+      el('th',{},'Pendientes'),
+      el('th',{},'Cumplimiento')
+    )),
+    el('tbody',{},
+      ...rows.map(r => el('tr',{},
+        el('td',{}, r.mes),
+        c(r.programadas, r.monthIdx, {}),
+        c(r.asignadas, r.monthIdx, {}),
+        r.sinAsignar > 0 ? el('td',{class:'cell',onclick:()=>navigate('mp',{mes:r.mes, sinAsignar:'1'}),style:{color:r.sinAsignar>0?'var(--st)':null}}, el('span',{class:'v'}, String(r.sinAsignar))) : el('td',{class:'cell zero'},'–'),
+        c(r.ejecutadas, r.monthIdx, {estadoMP:'ejec'}),
+        c(r.pendientes, r.monthIdx, {estadoMP:'pend'}),
+        el('td',{}, r.pct == null ? '–' : el('span',{},
+          el('span',{class:'bar',style:{width: Math.max(4, r.pct*0.6)+'px',background: r.pct===100?'var(--op)':r.pct>=50?'var(--st)':'var(--noop)'}}),
+          r.pct + '%'
+        ))
+      )),
+      el('tr',{class:'total-row'},
+        el('td',{},'Total año'),
+        el('td',{}, String(tot.programadas)),
+        el('td',{}, String(tot.asignadas)),
+        el('td',{}, String(tot.programadas - tot.asignadas)),
+        el('td',{}, String(tot.ejecutadas)),
+        el('td',{}, String(tot.pendientes)),
+        el('td',{}, pctTot == null ? '–' : pctTot+'%')
+      )
+    )
+  );
+  if(returnParts){
+    return {title:`MP del año ${year} · por mes`, hint:'12 meses · click en celda para abrir vista filtrada', table};
+  }
+  return el('div',{class:'sum-section'},
+    el('div',{class:'sum-section-hd'},
+      el('h3',{},`MP del año ${year} · por mes`),
+      el('span',{class:'hint'},'12 meses · click en celda para abrir vista filtrada')
+    ),
+    table
+  );
+}
+
+function renderSumEjecutoresMP(year, monthIdx, returnParts){
   const mes = NUM_MES[monthIdx];
   const keyMes = `${year}-${String(monthIdx+1).padStart(2,'0')}`;
   state.asignacionesMP[keyMes] = state.asignacionesMP[keyMes] || {};
@@ -1586,52 +1689,54 @@ function renderSumEjecutoresMP(year, monthIdx){
     return el('td',{class:'cell', onclick:()=>navigate('mp', {ejecutor, ...params})}, el('span',{class:'v'}, String(val)));
   }
 
-  return el('div',{class:'sum-section'},
-    el('div',{class:'sum-section-hd'},
-      el('h3',{},`MP del mes · ${mes} ${year} · por ejecutor`),
-      el('span',{class:'hint'},
-        sinAsignar > 0
-          ? el('span',{style:{color:'var(--noop)'}}, `${sinAsignar} sin asignar`)
-          : `${totalAsig} asignadas`
+  const table = el('table',{class:'sum-table'},
+    el('thead',{},
+      el('tr',{},
+        el('th',{},'Ejecutor'),
+        el('th',{},'Asignadas'),
+        el('th',{},'Ejecutadas'),
+        el('th',{},'Pendientes'),
+        el('th',{},'Cumplimiento')
       )
     ),
-    el('table',{class:'sum-table'},
-      el('thead',{},
-        el('tr',{},
-          el('th',{},'Ejecutor'),
-          el('th',{},'Asignadas'),
-          el('th',{},'Ejecutadas'),
-          el('th',{},'Pendientes'),
-          el('th',{},'Cumplimiento')
-        )
-      ),
-      el('tbody',{},
-        ...rows.filter(r=>r.asignadas>0).map(r => el('tr',{},
-          el('td',{}, r.ejecutor),
-          c(r.asignadas, r.ejecutor, {}),
-          c(r.ejecutadas, r.ejecutor, {estadoMP:'ejec'}),
-          c(r.pendientes, r.ejecutor, {estadoMP:'pend'}),
-          el('td',{},
-            r.pct == null ? '–' : el('span',{},
-              el('span',{class:'bar',style:{width: Math.max(4, r.pct*0.6)+'px',background: r.pct===100?'var(--op)':r.pct>=50?'var(--st)':'var(--noop)'}}),
-              r.pct + '%'
-            )
+    el('tbody',{},
+      ...rows.filter(r=>r.asignadas>0).map(r => el('tr',{},
+        el('td',{}, r.ejecutor),
+        c(r.asignadas, r.ejecutor, {}),
+        c(r.ejecutadas, r.ejecutor, {estadoMP:'ejec'}),
+        c(r.pendientes, r.ejecutor, {estadoMP:'pend'}),
+        el('td',{},
+          r.pct == null ? '–' : el('span',{},
+            el('span',{class:'bar',style:{width: Math.max(4, r.pct*0.6)+'px',background: r.pct===100?'var(--op)':r.pct>=50?'var(--st)':'var(--noop)'}}),
+            r.pct + '%'
           )
-        )),
-        sinAsignar > 0 ? el('tr',{style:{background:'#fef9c3'}},
-          el('td',{}, el('strong',{}, 'Sin asignar')),
-          el('td',{class:'cell', onclick:()=>navigate('mp',{sinAsignar:'1'})}, el('span',{class:'v'}, String(sinAsignar))),
-          el('td',{}, '–'), el('td',{}, '–'), el('td',{}, '–')
-        ) : null,
-        el('tr',{class:'total-row'},
-          el('td',{},'Total'),
-          el('td',{}, String(totalAsig+sinAsignar)),
-          el('td',{}, String(totalEjec)),
-          el('td',{}, String(totalPend+sinAsignar)),
-          el('td',{}, totalAsig+sinAsignar === 0 ? '–' : Math.round(totalEjec/(totalAsig+sinAsignar)*100)+'%')
         )
+      )),
+      sinAsignar > 0 ? el('tr',{style:{background:'#fef9c3'}},
+        el('td',{}, el('strong',{}, 'Sin asignar')),
+        el('td',{class:'cell', onclick:()=>navigate('mp',{sinAsignar:'1'})}, el('span',{class:'v'}, String(sinAsignar))),
+        el('td',{}, '–'), el('td',{}, '–'), el('td',{}, '–')
+      ) : null,
+      el('tr',{class:'total-row'},
+        el('td',{},'Total'),
+        el('td',{}, String(totalAsig+sinAsignar)),
+        el('td',{}, String(totalEjec)),
+        el('td',{}, String(totalPend+sinAsignar)),
+        el('td',{}, totalAsig+sinAsignar === 0 ? '–' : Math.round(totalEjec/(totalAsig+sinAsignar)*100)+'%')
       )
     )
+  );
+  const title = `MP del mes · ${mes} ${year} · por ejecutor`;
+  const hint = sinAsignar > 0
+    ? el('span',{style:{color:'var(--noop)'}}, `${sinAsignar} sin asignar`)
+    : `${totalAsig} asignadas`;
+  if(returnParts) return {title, hint, table};
+  return el('div',{class:'sum-section'},
+    el('div',{class:'sum-section-hd'},
+      el('h3',{}, title),
+      el('span',{class:'hint'}, hint)
+    ),
+    table
   );
 }
 
