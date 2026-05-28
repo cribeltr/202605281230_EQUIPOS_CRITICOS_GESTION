@@ -42,6 +42,16 @@ v0.2 [2026-05-28] Rediseño minimalista + tablas resumen clickeables.
   - Cada celda con valor navega a la vista correspondiente con filtros pre-aplicados.
   - Sistema de filtros vía params en cada vista (equipos, mp, pendientes, eventos).
   - Chip de filtros activos visible y limpiable en cada vista.
+v0.16 [2026-05-28] Conflictos visibles desde el equipo (sin pasar por Conciliación).
+  - Tabla Equipos: nueva columna "Conf." con N° de conflictos pendientes por equipo
+    (badge rojo si >0).
+  - Ficha de equipo: tab "Conflictos (N)" cuando los hay, destacado en rojo.
+    Render inline con acciones Aceptar/Mantener/Posponer por conflicto + botones
+    masivos "Aceptar maestro a todos" / "Mantener programa en todos".
+  - eq-info-card en modales de Pendiente, +Evento y +MP rápida: badge clickeable
+    "N conflictos" que abre la ficha directo en el tab Conflictos.
+  - Helper conflictosDe(inv) compartido. navigate(equipo,{openTab:'conflictos'})
+    salta al tab al cargar.
 v0.15 [2026-05-28] Tarjeta de info del equipo en modales.
   - Modal de pendiente, modal de "+ Evento" y modal "+ MP rápida" muestran
     ahora una eq-info-card con: N° Carpeta, Serie, Marca, Modelo, Servicio,
@@ -510,6 +520,12 @@ header.top nav button .nav-badge{display:inline-block;margin-left:6px;padding:0 
 .conf-checkbox{padding:18px 8px 0 0;display:flex;align-items:flex-start;justify-content:center;min-width:32px}
 .conf-checkbox input[type=checkbox]{width:18px;height:18px;cursor:pointer;margin:0}
 .conf-row .conf-card{flex:1;margin-bottom:0}
+/* Tab Conflictos destacado */
+.tabs button.tab-conflict{color:var(--noop)!important;font-weight:600}
+.tabs button.tab-conflict.active{border-bottom-color:var(--noop)!important}
+.conflict-badge{cursor:pointer;transition:opacity .1s}
+.conflict-badge:hover{opacity:.8}
+
 /* Equipo info card en modales */
 .eq-info-card{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:14px 16px;margin-bottom:18px}
 .eq-info-hd{display:flex;align-items:center;gap:10px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border);flex-wrap:wrap}
@@ -624,7 +640,7 @@ header.top nav button .nav-badge{display:inline-block;margin-left:6px;padding:0 
 <body>
 <div class="app">
   <header class="top">
-    <h1>HHHA <small>Equipos Críticos · v0.15</small></h1>
+    <h1>HHHA <small>Equipos Críticos · v0.16</small></h1>
     <nav id="nav"></nav>
     <div class="tools">
       <span id="state-indicator" class="state-indicator" title="">—</span>
@@ -669,7 +685,7 @@ const SEED = {"equipos":[{"id":1,"carpeta":1,"inv":"2-115361","fam":"Incubadoras
 //==============================================================
 // CONSTANTES & CATÁLOGOS
 //==============================================================
-const APP_VERSION = '0.15';
+const APP_VERSION = '0.16';
 const STORAGE_KEY = 'hhha_v1_data';
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 const MES_NUM = {Ene:0,Feb:1,Mar:2,Abr:3,May:4,Jun:5,Jul:6,Ago:7,Sep:8,Oct:9,Nov:10,Dic:11};
@@ -951,6 +967,7 @@ function findEquipo(inv){ return state.equipos.find(e => e.inv === inv); }
 function eventosDe(inv){ return state.eventos.filter(e => e.inv === inv && !e.anulado).sort((a,b)=> (a.fecha||'').localeCompare(b.fecha||'')); }
 function eventosDeTodos(inv){ return state.eventos.filter(e => e.inv === inv).sort((a,b)=> (a.fecha||'').localeCompare(b.fecha||'')); }
 function pendientesDe(inv){ return state.pendientes.filter(p => p.inv === inv && !p.anulado); }
+function conflictosDe(inv){ return (state.conflictos||[]).filter(c => c.inv === inv && (c.estado === 'pendiente' || c.estado === 'pospuesto')); }
 function ciclosDe(inv){ return state.ciclos.filter(c => c.inv === inv); }
 function ciclosAbiertosDe(inv){ return state.ciclos.filter(c => c.inv === inv && c.estado === 'abierto'); }
 
@@ -1670,6 +1687,7 @@ VIEWS.equipos = function(root, params){
       const pend = pendientesDe(e.inv).filter(p => p.estado !== 'cerrado').length;
       const mpEjecutada = mpDelMesEjecutada(e, new Date().getFullYear(), new Date().getMonth());
       const mpProg = mpProgramadaEnMes(e, NUM_MES[new Date().getMonth()]);
+      const conflCount = conflictosDe(e.inv).length;
       tbody.appendChild(el('tr',{class:'clickable',onclick:()=>navigate('equipo',{inv:e.inv})},
         el('td',{class:'num'}, e.id != null ? String(e.id) : '—'),
         el('td',{}, e.carpeta != null ? String(e.carpeta) : '—'),
@@ -1680,7 +1698,8 @@ VIEWS.equipos = function(root, params){
         el('td',{}, e.modelo||'—'),
         el('td',{}, badgeEstado(e.estado), el('br'), el('small',{class:'muted'}, e.estadoDesde ? diasEnEstado(e)+' d' : '')),
         el('td',{}, mpProg ? (mpEjecutada ? el('span',{class:'badge mp-si'},'Ejecutada') : el('span',{class:'badge mp-no'},'Pendiente')) : el('small',{class:'muted'},'No prog.')),
-        el('td',{class:'num'}, pend > 0 ? el('span',{class:'badge abierto'},pend) : el('small',{class:'muted'},'—'))
+        el('td',{class:'num'}, pend > 0 ? el('span',{class:'badge abierto'},pend) : el('small',{class:'muted'},'—')),
+        el('td',{class:'num'}, conflCount > 0 ? el('span',{class:'badge noop',title:`${conflCount} conflicto(s) pendientes con maestro`}, conflCount) : el('small',{class:'muted'},'—'))
       ));
     });
     counter.textContent = `${filtered.length} equipos${filtered.length>500?' (mostrando primeros 500)':''}`;
@@ -1726,7 +1745,7 @@ VIEWS.equipos = function(root, params){
       el('table',{class:'data',style:{border:'none'}},
         el('thead',{},
           el('tr',{},
-            ['ID','N° Carpeta','N° Inv.','Equipo','Servicio / Unidad','Marca','Modelo','Estado','MP del mes','Pend.'].map(h=>el('th',{},h))
+            ['ID','N° Carpeta','N° Inv.','Equipo','Servicio / Unidad','Marca','Modelo','Estado','MP del mes','Pend.','Conf.'].map(h=>el('th',{},h))
           )
         ),
         tbody
@@ -1752,8 +1771,9 @@ VIEWS.equipo = function(root, params){
   const evsAnulados = state.eventos.filter(e => e.inv === eq.inv && e.anulado);
   const ciclos = ciclosDe(eq.inv);
   const pends = pendientesDe(eq.inv);
+  const conflicts = conflictosDe(eq.inv);
 
-  let tab = 'datos';
+  let tab = conflicts.length > 0 && params.openTab === 'conflictos' ? 'conflictos' : 'datos';
   const tabsContent = el('div',{});
   const tabs = el('div',{class:'tabs'});
   function renderTabs(){
@@ -1761,8 +1781,13 @@ VIEWS.equipo = function(root, params){
     const lblBit = evsAnulados.length > 0
       ? `Bitácora (${evs.length} + ${evsAnulados.length} anulado${evsAnulados.length>1?'s':''})`
       : `Bitácora (${evs.length})`;
-    [['datos','Datos generales'],['mp','Programación MP'],['bitacora', lblBit],['ciclos',`Ciclos correctivos (${ciclos.length})`],['pendientes',`Pendientes (${pends.filter(p=>p.estado!=='cerrado').length}/${pends.length})`]].forEach(([k,l])=>{
-      tabs.appendChild(el('button',{class:tab===k?'active':'',onclick:()=>{tab=k;renderTabs();renderTabBody();}},l));
+    const lblConf = conflicts.length > 0 ? `Conflictos (${conflicts.length})` : null;
+    const cfg = [['datos','Datos generales'],['mp','Programación MP'],['bitacora', lblBit],['ciclos',`Ciclos correctivos (${ciclos.length})`],['pendientes',`Pendientes (${pends.filter(p=>p.estado!=='cerrado').length}/${pends.length})`]];
+    if(lblConf) cfg.push(['conflictos', lblConf]);
+    cfg.forEach(([k,l])=>{
+      const b = el('button',{class:tab===k?'active':'',onclick:()=>{tab=k;renderTabs();renderTabBody();}},l);
+      if(k === 'conflictos') b.classList.add('tab-conflict');
+      tabs.appendChild(b);
     });
   }
   function renderTabBody(){
@@ -1804,6 +1829,8 @@ VIEWS.equipo = function(root, params){
       tabsContent.appendChild(renderCiclos(eq));
     } else if(tab==='pendientes'){
       tabsContent.appendChild(renderPendientesEquipo(eq));
+    } else if(tab==='conflictos'){
+      tabsContent.appendChild(renderConflictosEquipo(eq, ()=>{ navigate('equipo',{inv:eq.inv, openTab:'conflictos'}); }));
     }
   }
 
@@ -1978,6 +2005,58 @@ function renderCiclos(eq){
       c.estado==='abierto' ? el('div',{style:{marginTop:'5px'}}, el('button',{class:'small',onclick:()=>cerrarCicloManual(c)},'Cerrar manualmente')) : null
     )))
   );
+}
+
+function renderConflictosEquipo(eq, refresh){
+  const lista = conflictosDe(eq.inv);
+  if(lista.length === 0) return el('div',{class:'empty'},'Sin conflictos pendientes con el maestro.');
+  function aplicarTodos(accion){
+    if(lista.length > 5 && !confirm(`Aplicar "${accion}" a ${lista.length} conflictos de este equipo?`)) return;
+    let n = 0, evsSint = 0;
+    lista.forEach(c => {
+      const r = resolverConflicto(c, accion, null, {skipSave:true});
+      n++;
+      if(r && r.eventoCreado) evsSint++;
+    });
+    save();
+    refreshNav();
+    toast(`${n} resueltos${evsSint>0?' · '+evsSint+' eventos creados':''}`, 'success');
+    refresh();
+  }
+  const acciones = el('div',{style:{display:'flex',gap:'6px',marginBottom:'12px',flexWrap:'wrap'}},
+    el('span',{style:{flex:'1',fontSize:'13px',color:'var(--muted)'}}, `${lista.length} conflicto${lista.length>1?'s':''} pendiente${lista.length>1?'s':''}`),
+    el('button',{class:'small primary',onclick:()=>aplicarTodos('aceptar_maestro')}, '✓ Aceptar maestro a todos'),
+    el('button',{class:'small',onclick:()=>aplicarTodos('mantener_programa')}, '✗ Mantener programa en todos')
+  );
+  const cards = lista.map(c => {
+    const card = el('div',{class:'conf-card '+(c.tipo==='equipo_nuevo'?'altas':c.tipo==='equipo_faltante'?'faltante':'urgent')});
+    card.appendChild(el('div',{class:'hd'},
+      el('div',{},
+        el('div',{class:'title'}, nombreCampoConflicto(c)),
+        el('div',{class:'meta'}, 'Detectado: '+new Date(c.fechaDeteccion).toLocaleString('es-CL'))
+      ),
+      el('span',{class:'badge '+(c.estado==='pendiente'?'noop':'st')}, c.estado)
+    ));
+    if(c.tipo === 'mp_diferencia'){
+      card.appendChild(el('div',{class:'conf-diff'},
+        el('div',{class:'prog'},
+          el('div',{class:'lbl'},'En el programa'),
+          el('div',{class:c.valorPrograma?'val':'val empty'}, c.valorPrograma || 'sin valor')
+        ),
+        el('div',{class:'mast'},
+          el('div',{class:'lbl'},'En el maestro (Excel)'),
+          el('div',{class:c.valorMaestro?'val':'val empty'}, c.valorMaestro || 'sin valor')
+        )
+      ));
+    }
+    card.appendChild(el('div',{class:'conf-actions'},
+      el('button',{class:'primary small',onclick:()=>{const r=resolverConflicto(c,'aceptar_maestro');refresh();}},'✓ Aceptar maestro'),
+      el('button',{class:'small',onclick:()=>{resolverConflicto(c,'mantener_programa');refresh();}},'✗ Mantener programa'),
+      el('button',{class:'small ghost',onclick:()=>{resolverConflicto(c,'posponer');refresh();}},'⏸ Posponer')
+    ));
+    return card;
+  });
+  return el('div',{class:'section'}, acciones, el('div',{}, ...cards));
 }
 
 function renderPendientesEquipo(eq){
@@ -3230,7 +3309,8 @@ function mpRapida(opts){
       el('div',{class:'eq-info-hd'},
         el('strong',{}, eq.equipo||'—'),
         el('span',{class:'eq-info-inv'}, ' · '+eq.inv),
-        badgeEstado(eq.estado)
+        badgeEstado(eq.estado),
+        conflictosDe(eq.inv).length > 0 ? el('span',{class:'badge noop conflict-badge', title:'Conflictos pendientes con maestro', onclick:()=>{closeModal();navigate('equipo',{inv:eq.inv, openTab:'conflictos'});}}, conflictosDe(eq.inv).length+' conflicto'+(conflictosDe(eq.inv).length>1?'s':'')) : null
       ),
       el('div',{class:'eq-info-grid'},
         eqInfoCell('N° Carpeta', eq.carpeta),
@@ -3475,7 +3555,8 @@ function nuevoEvento(opts){
         el('div',{class:'eq-info-hd'},
           el('strong',{}, eq.equipo||'—'),
           el('span',{class:'eq-info-inv'}, ' · '+eq.inv),
-          badgeEstado(eq.estado)
+          badgeEstado(eq.estado),
+          conflictosDe(eq.inv).length > 0 ? el('span',{class:'badge noop conflict-badge', title:'Conflictos pendientes con maestro', onclick:()=>{closeModal();navigate('equipo',{inv:eq.inv, openTab:'conflictos'});}}, conflictosDe(eq.inv).length+' conflicto'+(conflictosDe(eq.inv).length>1?'s':'')) : null
         ),
         el('div',{class:'eq-info-grid'},
           eqInfoCell('N° Carpeta', eq.carpeta),
@@ -3777,6 +3858,7 @@ function abrirPendiente(p){
         el('strong',{}, eq.equipo||p.equipo||'—'),
         el('span',{class:'eq-info-inv'}, ' · '+p.inv),
         eq.estado ? badgeEstado(eq.estado) : null,
+        conflictosDe(p.inv).length > 0 ? el('span',{class:'badge noop conflict-badge', title:'Click para ir a la pestaña Conflictos del equipo', onclick:()=>{closeModal();navigate('equipo',{inv:p.inv, openTab:'conflictos'});}}, conflictosDe(p.inv).length+' conflicto'+(conflictosDe(p.inv).length>1?'s':'')) : null,
         el('button',{class:'small ghost eq-info-link',onclick:()=>{closeModal();navigate('equipo',{inv:p.inv});}}, 'Ver ficha →')
       ),
       el('div',{class:'eq-info-grid'},
