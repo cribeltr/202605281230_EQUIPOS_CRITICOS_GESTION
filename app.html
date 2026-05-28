@@ -42,6 +42,18 @@ v0.2 [2026-05-28] Rediseño minimalista + tablas resumen clickeables.
   - Cada celda con valor navega a la vista correspondiente con filtros pre-aplicados.
   - Sistema de filtros vía params en cada vista (equipos, mp, pendientes, eventos).
   - Chip de filtros activos visible y limpiable en cada vista.
+v0.21 [2026-05-28] Auto-completado en Conciliación: celdas vacías se llenan con datos del maestro.
+  - Antes: cualquier diferencia generaba conflicto (con 894 equipos × 24 celdas
+    inflaba la cola a >900).
+  - Ahora: si el programa está vacío y el maestro tiene dato → auto-completa
+    sin generar conflicto. Solo se genera conflicto cuando ambos tienen valor
+    distinto, o el programa tiene dato y el maestro está vacío (protege dato).
+  - Auto-completados de columna R con valor del catálogo MP (Si/C1-C8/etc) crean
+    evento sintético "Mantención preventiva" con fecha día 15, marcado origen
+    'conciliacion_auto' para trazabilidad.
+  - Reporte de importación: nueva métrica "Auto-completados" en tarjetas de
+    historial, con color verde si >0.
+  - compararMaestro ahora retorna {conflictos, autoCompletados, eventosSinteticos}.
 v0.20 [2026-05-28] Auditoría: registro masivo MP + asignación masiva + fecha sugerida + modal anulación.
   - Vista MP del mes: checkbox por fila + bulk-bar con:
     · "+ Registrar MP a todos" → modal con fecha/resultado/ejecutor/observación
@@ -712,7 +724,7 @@ header.top nav button .nav-badge{display:inline-block;margin-left:6px;padding:0 
 <body>
 <div class="app">
   <header class="top">
-    <h1>HHHA <small>Equipos Críticos · v0.20</small></h1>
+    <h1>HHHA <small>Equipos Críticos · v0.21</small></h1>
     <nav id="nav"></nav>
     <div class="tools">
       <span id="state-indicator" class="state-indicator" title="">—</span>
@@ -757,7 +769,7 @@ const SEED = {"equipos":[{"id":1,"carpeta":1,"inv":"2-115361","fam":"Incubadoras
 //==============================================================
 // CONSTANTES & CATÁLOGOS
 //==============================================================
-const APP_VERSION = '0.20';
+const APP_VERSION = '0.21';
 const STORAGE_KEY = 'hhha_v1_data';
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 const MES_NUM = {Ene:0,Feb:1,Mar:2,Abr:3,May:4,Jun:5,Jul:6,Ago:7,Sep:8,Oct:9,Nov:10,Dic:11};
@@ -2880,6 +2892,8 @@ function compararMaestro(parsed, importacionId){
   // Año del archivo extraído del nombre de la hoja (PMP_2026 / Registro_MP-2026)
   const yearMatch = (parsed.sheetPMP||parsed.sheetReg||'').match(/(\d{4})/);
   const year = yearMatch ? parseInt(yearMatch[1]) : new Date().getFullYear();
+  let autoCompletados = 0;
+  let eventosSinteticos = 0;
 
   // 1. Equipos nuevos: en maestro pero no en programa
   todos.forEach(inv => {
@@ -2934,17 +2948,22 @@ function compararMaestro(parsed, importacionId){
     MESES.forEach(mes => {
       const valProg = valNorm(((eq.prog||{})[mes]) || '');
       const valMast = fromPMP ? valNorm(fromPMP.prog[mes] || '') : '';
-      if(valProg !== valMast){
-        if(fromPMP || valProg){ // si el equipo existe en el maestro, comparamos; si no, ignoramos
-          if(!fromPMP) return;
-          registrarOActualizarConflicto({
-            tipo:'mp_diferencia', inv, equipo: eq.equipo,
-            hoja:'PMP', mes, campo:'P', year,
-            valorPrograma: valProg, valorMaestro: valMast,
-            importacionId
-          }, conflictosNuevos);
-        }
+      if(valProg === valMast) return;
+      if(!fromPMP) return; // equipo no en hoja PMP del archivo
+      // Auto-completar: vacío en programa + valor en maestro → escribir sin conflicto
+      if(!valProg && valMast){
+        eq.prog = eq.prog || {};
+        eq.prog[mes] = valMast;
+        autoCompletados++;
+        return;
       }
+      // Conflicto: valor diferente o el programa tiene dato y maestro vacío
+      registrarOActualizarConflicto({
+        tipo:'mp_diferencia', inv, equipo: eq.equipo,
+        hoja:'PMP', mes, campo:'P', year,
+        valorPrograma: valProg, valorMaestro: valMast,
+        importacionId
+      }, conflictosNuevos);
     });
 
     // Registro_MP: P y R
@@ -2954,22 +2973,57 @@ function compararMaestro(parsed, importacionId){
       ['P','R'].forEach(campo => {
         const vp = valNorm(regProg[campo] || '');
         const vm = valNorm(regMast[campo] || '');
-        if(vp !== vm){
-          if(!fromReg && !vp) return;
-          if(!fromReg) return; // equipo no está en el maestro, ya se manejó como faltante
-          registrarOActualizarConflicto({
-            tipo:'mp_diferencia', inv, equipo: eq.equipo,
-            hoja:'Registro', mes, campo, year,
-            valorPrograma: vp, valorMaestro: vm,
-            importacionId
-          }, conflictosNuevos);
+        if(vp === vm) return;
+        if(!fromReg) return; // equipo no está en hoja Registro, ya se manejó como faltante
+        // Auto-completar: vacío en programa + valor en maestro
+        if(!vp && vm){
+          eq.registro = eq.registro || {};
+          eq.registro[mes] = eq.registro[mes] || {};
+          eq.registro[mes][campo] = vm;
+          autoCompletados++;
+          // Si es R con valor MP del catálogo y no hay evento MP en ese mes, crear sintético
+          if(campo === 'R' && RESULTADOS_MP.has(vm)){
+            const mIdx = MES_NUM[mes];
+            const yaExiste = state.eventos.some(ev =>
+              ev.inv === eq.inv && !ev.anulado && ev.tipo === 'Mantención preventiva' &&
+              ev.fecha && new Date(ev.fecha+'T00:00:00').getMonth() === mIdx &&
+              ev.fecha.startsWith(String(year)));
+            if(!yaExiste){
+              const fecha = `${year}-${String(mIdx+1).padStart(2,'0')}-15`;
+              const ev = {
+                id: state.counters.evento++,
+                inv: eq.inv, equipo: eq.equipo, servicio: eq.servicio, fam: eq.fam,
+                tipo: 'Mantención preventiva',
+                fecha, fechaReg: hoyLocal(),
+                resultado: vm,
+                ejecutor: getPref('ultimoEjecutor', null) || 'Personal externo',
+                estado: vm === 'Si' ? 'operativo' : vm === 'Baja' ? 'baja' : (eq.estado||'operativo'),
+                obs: `[Conciliación auto] Importado desde maestro · Importación #${importacionId}`,
+                oficial: 'No', anulado: false,
+                origen: 'conciliacion_auto',
+                creadoPor: 'Cristian',
+                ts: new Date().toISOString()
+              };
+              state.eventos.push(ev);
+              audit('evento', ev.id, 'creado_autocompletado', null, 'conciliacion');
+              eventosSinteticos++;
+            }
+          }
+          return;
         }
+        // Conflicto: valores diferentes ambos con dato, o programa con dato y maestro vacío
+        registrarOActualizarConflicto({
+          tipo:'mp_diferencia', inv, equipo: eq.equipo,
+          hoja:'Registro', mes, campo, year,
+          valorPrograma: vp, valorMaestro: vm,
+          importacionId
+        }, conflictosNuevos);
       });
     });
   });
 
   state.conflictos.push(...conflictosNuevos);
-  return conflictosNuevos.length;
+  return {conflictos: conflictosNuevos.length, autoCompletados, eventosSinteticos};
 }
 
 function registrarOActualizarConflicto(data, buffer){
@@ -3181,14 +3235,26 @@ VIEWS.conciliacion = function(root, params){
         totalPrograma: state.equipos.length,
         generados: 0, resueltos: 0
       };
-      const generados = compararMaestro(parsed, importacion.id);
-      importacion.generados = generados;
+      const result = compararMaestro(parsed, importacion.id);
+      importacion.generados = result.conflictos;
+      importacion.autoCompletados = result.autoCompletados;
+      importacion.eventosSinteticos = result.eventosSinteticos;
       state.importaciones.unshift(importacion);
       save();
       refreshNav();
-      s2.textContent = `✓ Comparación completada. ${generados} conflictos nuevos detectados.`;
+      s2.textContent = `✓ Comparación completada.`;
       s2.classList.add('done');
-      const s3 = el('div',{class:'step done'}, generados === 0 ? '✓ Sin diferencias — el programa y el maestro están al día.' : `→ ${generados} conflictos pendientes en la lista de abajo.`);
+      // Reporte de autocompletado
+      if(result.autoCompletados > 0){
+        const sAuto = el('div',{class:'step done'},
+          `✓ Auto-completados: ${result.autoCompletados} celdas vacías del programa con datos del maestro` +
+          (result.eventosSinteticos > 0 ? ` (${result.eventosSinteticos} eventos sintéticos en bitácora)` : '')
+        );
+        box.appendChild(sAuto);
+      }
+      const s3 = el('div',{class:'step done'}, result.conflictos === 0
+        ? '✓ Sin conflictos — celdas con valores diferentes no se encontraron.'
+        : `→ ${result.conflictos} conflictos pendientes (valores diferentes) en la lista de abajo.`);
       box.appendChild(s3);
       render();
     } catch(err){
@@ -3277,7 +3343,8 @@ VIEWS.conciliacion = function(root, params){
           el('div',{class:'name'}, imp.nombre),
           el('div',{class:'date'}, new Date(imp.fecha).toLocaleString('es-CL')),
           el('div',{class:'nums'},
-            el('span',{},el('span',{class:'n'},String(imp.generados||0)),el('small',{},' Generados')),
+            el('span',{},el('span',{class:'n'},String(imp.generados||0)),el('small',{},' Conflictos')),
+            el('span',{},el('span',{class:'n',style:imp.autoCompletados>0?{color:'var(--op)'}:{}},String(imp.autoCompletados||0)),el('small',{},' Auto-completados')),
             el('span',{},el('span',{class:'n'},String(imp.resueltos||0)),el('small',{},' Resueltos')),
             el('span',{},el('span',{class:'n',style:pend>0?{color:'var(--noop)'}:{}},String(pend)),el('small',{},' Pendientes'))
           )
