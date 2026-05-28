@@ -42,6 +42,13 @@ v0.2 [2026-05-28] Rediseño minimalista + tablas resumen clickeables.
   - Cada celda con valor navega a la vista correspondiente con filtros pre-aplicados.
   - Sistema de filtros vía params en cada vista (equipos, mp, pendientes, eventos).
   - Chip de filtros activos visible y limpiable en cada vista.
+v0.15 [2026-05-28] Tarjeta de info del equipo en modales.
+  - Modal de pendiente, modal de "+ Evento" y modal "+ MP rápida" muestran
+    ahora una eq-info-card con: N° Carpeta, Serie, Marca, Modelo, Servicio,
+    Unidad, Ubicación, Frecuencia MP + estado actual + N° Inv.
+  - En el modal de pendiente, link "Ver ficha →" para abrir la ficha completa.
+  - Helper eqInfoCell para celdas con label/valor consistente.
+  - Tema-aware (claro/oscuro).
 v0.14 [2026-05-28] Rediseño dual theme + grabador auto-start enriquecido.
   - Tema claro suave (off-white tibio, acento verde-azul #0d7a6b) por default;
     toggle ☀/🌙 en el header conmuta a tema oscuro moderno. Persiste en prefs.theme.
@@ -503,6 +510,18 @@ header.top nav button .nav-badge{display:inline-block;margin-left:6px;padding:0 
 .conf-checkbox{padding:18px 8px 0 0;display:flex;align-items:flex-start;justify-content:center;min-width:32px}
 .conf-checkbox input[type=checkbox]{width:18px;height:18px;cursor:pointer;margin:0}
 .conf-row .conf-card{flex:1;margin-bottom:0}
+/* Equipo info card en modales */
+.eq-info-card{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:14px 16px;margin-bottom:18px}
+.eq-info-hd{display:flex;align-items:center;gap:10px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.eq-info-hd strong{font-size:15px;font-weight:600;color:var(--text)}
+.eq-info-inv{color:var(--muted);font-family:var(--mono);font-size:13px}
+.eq-info-link{margin-left:auto !important;font-size:12px}
+.eq-info-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px 16px}
+.eq-info-cell{font-size:12px}
+.eq-info-lbl{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.05em;font-weight:500;margin-bottom:2px}
+.eq-info-val{color:var(--text);font-weight:500;font-size:13px;font-variant-numeric:tabular-nums;word-break:break-word}
+.eq-info-val.empty{color:var(--muted-2);font-style:italic;font-weight:400}
+
 /* Pendiente modal: secciones más claras */
 .pend-section{margin:18px 0;padding:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2)}
 .pend-section .pend-section-lbl{display:block;font-size:12px;font-weight:600;color:var(--text);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
@@ -605,7 +624,7 @@ header.top nav button .nav-badge{display:inline-block;margin-left:6px;padding:0 
 <body>
 <div class="app">
   <header class="top">
-    <h1>HHHA <small>Equipos Críticos · v0.14</small></h1>
+    <h1>HHHA <small>Equipos Críticos · v0.15</small></h1>
     <nav id="nav"></nav>
     <div class="tools">
       <span id="state-indicator" class="state-indicator" title="">—</span>
@@ -650,7 +669,7 @@ const SEED = {"equipos":[{"id":1,"carpeta":1,"inv":"2-115361","fam":"Incubadoras
 //==============================================================
 // CONSTANTES & CATÁLOGOS
 //==============================================================
-const APP_VERSION = '0.14';
+const APP_VERSION = '0.15';
 const STORAGE_KEY = 'hhha_v1_data';
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 const MES_NUM = {Ene:0,Feb:1,Mar:2,Abr:3,May:4,Jun:5,Jul:6,Ago:7,Sep:8,Oct:9,Nov:10,Dic:11};
@@ -3207,7 +3226,23 @@ function mpRapida(opts){
            resultado.value !== valoresIniciales.resultado;
   }
   modal({title:`MP rápida · ${eq.inv} · ${eq.equipo}`, hasUnsavedData, body: el('div',{},
-    el('div',{class:'subtitle',style:{marginBottom:'14px'}}, (eq.servicio||'') + ' · ' + (eq.ubic||'')),
+    el('div',{class:'eq-info-card'},
+      el('div',{class:'eq-info-hd'},
+        el('strong',{}, eq.equipo||'—'),
+        el('span',{class:'eq-info-inv'}, ' · '+eq.inv),
+        badgeEstado(eq.estado)
+      ),
+      el('div',{class:'eq-info-grid'},
+        eqInfoCell('N° Carpeta', eq.carpeta),
+        eqInfoCell('Serie', eq.serie),
+        eqInfoCell('Marca', eq.marca),
+        eqInfoCell('Modelo', eq.modelo),
+        eqInfoCell('Servicio', eq.servicio),
+        eqInfoCell('Unidad', eq.unidad),
+        eqInfoCell('Ubicación', eq.ubic),
+        eqInfoCell('Frecuencia MP', eq.freq)
+      )
+    ),
     el('div',{class:'grid-2'},
       formField('Fecha de la MP', fecha),
       formField('Resultado', resultado)
@@ -3435,11 +3470,25 @@ function nuevoEvento(opts){
     }
 
     return el('div',{},
-      el('div',{class:'grid-2',style:{marginBottom:'14px'}},
-        formField('N° Inventario del equipo', el('div',{},invInput,dataList)),
-        eq ? el('div',{},el('label',{},'Equipo seleccionado'), el('div',{style:{padding:'8px 0'}}, el('strong',{}, eq.equipo),' · ',eq.servicio||'',' · ',badgeEstado(eq.estado))) : null
-      ),
-      el('h3',{style:{marginTop:'0'}},'Tipo de evento'),
+      formField('N° Inventario del equipo', el('div',{},invInput,dataList)),
+      eq ? el('div',{class:'eq-info-card',style:{marginTop:'14px'}},
+        el('div',{class:'eq-info-hd'},
+          el('strong',{}, eq.equipo||'—'),
+          el('span',{class:'eq-info-inv'}, ' · '+eq.inv),
+          badgeEstado(eq.estado)
+        ),
+        el('div',{class:'eq-info-grid'},
+          eqInfoCell('N° Carpeta', eq.carpeta),
+          eqInfoCell('Serie', eq.serie),
+          eqInfoCell('Marca', eq.marca),
+          eqInfoCell('Modelo', eq.modelo),
+          eqInfoCell('Servicio', eq.servicio),
+          eqInfoCell('Unidad', eq.unidad),
+          eqInfoCell('Ubicación', eq.ubic),
+          eqInfoCell('Frecuencia MP', eq.freq)
+        )
+      ) : null,
+      el('h3',{style:{marginTop:'18px'}},'Tipo de evento'),
       tipoGrid,
       tipo ? el('h3',{},'Datos del evento') : null,
       campos
@@ -3460,6 +3509,13 @@ function nuevoEvento(opts){
 }
 function formField(label, ctrl){
   return el('div',{}, el('label',{}, label), ctrl);
+}
+function eqInfoCell(lbl, val){
+  const v = (val==null||val==='') ? '—' : String(val);
+  return el('div',{class:'eq-info-cell'},
+    el('div',{class:'eq-info-lbl'}, lbl),
+    el('div',{class:'eq-info-val'+(v==='—'?' empty':'')}, v)
+  );
 }
 
 //==============================================================
@@ -3648,6 +3704,7 @@ function nuevoPendiente(opts){
 }
 
 function abrirPendiente(p){
+  const eq = findEquipo(p.inv) || {};
   const desc = el('textarea',{},p.desc||'');
   const tipo = el('select',{}, ...Object.entries(TIPO_PENDIENTE).map(([k,v])=>el('option',{value:k,selected:k===p.tipo?'selected':false},v)));
   const ejec = el('select',{}, el('option',{value:''},'—'), ...EJECUTORES.map(x=>el('option',{value:x,selected:x===p.ejecutor?'selected':false},x)));
@@ -3715,10 +3772,28 @@ function abrirPendiente(p){
   }});
 
   modal({title:'Pendiente · '+p.inv, wide:true, body: el('div',{},
+    el('div',{class:'eq-info-card'},
+      el('div',{class:'eq-info-hd'},
+        el('strong',{}, eq.equipo||p.equipo||'—'),
+        el('span',{class:'eq-info-inv'}, ' · '+p.inv),
+        eq.estado ? badgeEstado(eq.estado) : null,
+        el('button',{class:'small ghost eq-info-link',onclick:()=>{closeModal();navigate('equipo',{inv:p.inv});}}, 'Ver ficha →')
+      ),
+      el('div',{class:'eq-info-grid'},
+        eqInfoCell('N° Carpeta', eq.carpeta),
+        eqInfoCell('Serie', eq.serie),
+        eqInfoCell('Marca', eq.marca),
+        eqInfoCell('Modelo', eq.modelo),
+        eqInfoCell('Servicio', eq.servicio),
+        eqInfoCell('Unidad', eq.unidad),
+        eqInfoCell('Ubicación', eq.ubic),
+        eqInfoCell('Frecuencia MP', eq.freq)
+      )
+    ),
     el('div',{class:'grid-2'},
       formField('Tipo', tipo), formField('Estado', estado),
       formField('Ejecutor', ejec),
-      el('div',{},el('label',{},'Equipo'), el('div',{style:{padding:'8px 0'}}, p.inv+' · '+(p.equipo||'')+' · '+(p.servicio||'')))
+      formField('Equipo (resumen)', el('div',{style:{padding:'8px 0',color:'var(--muted)',fontSize:'13px'}}, `${p.inv} · ${eq.equipo||'—'}`))
     ),
     el('div',{class:'pend-section'},
       el('label',{class:'pend-section-lbl'},'Descripción del pendiente'),
