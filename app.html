@@ -42,6 +42,20 @@ v0.2 [2026-05-28] Rediseño minimalista + tablas resumen clickeables.
   - Cada celda con valor navega a la vista correspondiente con filtros pre-aplicados.
   - Sistema de filtros vía params en cada vista (equipos, mp, pendientes, eventos).
   - Chip de filtros activos visible y limpiable en cada vista.
+v0.7 [2026-05-28] Fixes UX detectados en sesión grabada.
+  - Modal con confirmación al cerrar: si el formulario tiene datos sin guardar,
+    pide confirmación antes de cerrar por click en el backdrop. Aplica a "+ Evento",
+    "+ MP rápida" y "+ Pendiente". Evita perder formulario por click accidental.
+  - Búsqueda en Eventos enriquecida con datos del equipo: serie, marca, modelo,
+    ubicación, unidad. Buscar "ASNM-0003" en la vista Eventos ahora encuentra los
+    eventos del equipo con esa serie.
+  - Tooltip en celdas con resultado MP (Si/C1-C8/FS/NU/Baja): muestra fecha,
+    ejecutor y observación del evento que dejó ese resultado, sin necesidad de click.
+  - Indicador "N eventos hoy" en la ficha del equipo (cuando hay registros del día).
+  - Auto-focus reforzado en MP rápida: fecha si vacío, ejecutor si fecha lista,
+    observación si ya todo viene precargado.
+  - Confirmación reforzada al anular eventos creados hace menos de 1 hora: muestra
+    cuántos minutos pasaron desde la creación para evitar anular por error.
 v0.6 [2026-05-28] Compresión de localStorage + auto-recuperación de cuota.
   - Embebida la librería lz-string (4.8 KB) para comprimir el state antes de
     guardar. Ratio típico observado: 14× (770 KB → 55 KB en UTF-16). Saca
@@ -403,6 +417,10 @@ header.top nav button .nav-badge{display:inline-block;margin-left:6px;padding:0 
 /* Backup pendiente */
 .toast.warn-backup{background:var(--st);color:#fff}
 
+/* Indicador "N eventos hoy" en ficha de equipo */
+.today-chip{display:inline-flex;align-items:center;padding:3px 10px;border-radius:99px;background:#dcfce7;color:#166534;font-size:12px;font-weight:500;cursor:pointer;border:1px solid #bbf7d0;transition:background .1s}
+.today-chip:hover{background:#bbf7d0}
+
 @media (max-width:900px){
   main{padding:18px 16px 60px}
   .grid-2,.grid-3{grid-template-columns:1fr}
@@ -421,7 +439,7 @@ header.top nav button .nav-badge{display:inline-block;margin-left:6px;padding:0 
 <body>
 <div class="app">
   <header class="top">
-    <h1>HHHA <small>Equipos Críticos · v0.6</small></h1>
+    <h1>HHHA <small>Equipos Críticos · v0.7</small></h1>
     <nav id="nav"></nav>
     <div class="tools">
       <span id="state-indicator" class="state-indicator" title="">—</span>
@@ -465,7 +483,7 @@ const SEED = {"equipos":[{"id":1,"carpeta":1,"inv":"2-115361","fam":"Incubadoras
 //==============================================================
 // CONSTANTES & CATÁLOGOS
 //==============================================================
-const APP_VERSION = '0.6';
+const APP_VERSION = '0.7';
 const STORAGE_KEY = 'hhha_v1_data';
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 const MES_NUM = {Ene:0,Feb:1,Mar:2,Abr:3,May:4,Jun:5,Jul:6,Ago:7,Sep:8,Oct:9,Nov:10,Dic:11};
@@ -913,14 +931,21 @@ function badgePendEstado(estado){
 //==============================================================
 // MODAL
 //==============================================================
-function modal({title, body, footer, wide=false, onClose}){
+function modal({title, body, footer, wide=false, onClose, hasUnsavedData}){
   const root = $('#modal-root');
   root.innerHTML = '';
-  const bd = el('div',{class:'modal-backdrop',onclick:e=>{if(e.target===bd){close()}}});
+  function tryClose(reason){
+    // reason: 'backdrop' | 'esc' | 'x' | 'cancel'
+    if(reason === 'backdrop' && hasUnsavedData && hasUnsavedData()){
+      if(!confirm('Hay datos sin guardar en el formulario. ¿Cerrar y descartar?')) return;
+    }
+    close();
+  }
+  const bd = el('div',{class:'modal-backdrop',onclick:e=>{if(e.target===bd){tryClose('backdrop')}}});
   const m  = el('div',{class:'modal'+(wide?' wide':'')});
   const hd = el('header',{},
     el('h2',{},title),
-    el('button',{class:'ghost',onclick:close,title:'Cerrar'},'✕')
+    el('button',{class:'ghost',onclick:()=>tryClose('x'),title:'Cerrar'},'✕')
   );
   const body_ = el('div',{class:'body'});
   if(typeof body === 'string') body_.innerHTML = body;
@@ -930,7 +955,10 @@ function modal({title, body, footer, wide=false, onClose}){
   m.appendChild(hd); m.appendChild(body_); if(footer && footer.length) m.appendChild(ft);
   bd.appendChild(m);
   root.appendChild(bd);
-  function close(){ root.innerHTML=''; onClose && onClose(); }
+  // Esc también pide confirmación
+  function onEsc(e){ if(e.key === 'Escape'){ tryClose('esc'); } }
+  document.addEventListener('keydown', onEsc);
+  function close(){ root.innerHTML=''; document.removeEventListener('keydown', onEsc); onClose && onClose(); }
   return {close};
 }
 function closeModal(){ $('#modal-root').innerHTML=''; }
@@ -1492,11 +1520,23 @@ VIEWS.equipo = function(root, params){
     }
   }
 
+  // Eventos creados hoy en este equipo (sin contar anulados)
+  const hoy = hoyLocal();
+  const evsHoy = state.eventos.filter(e => e.inv === eq.inv && !e.anulado &&
+    e.ts && new Date(e.ts).toISOString().slice(0,10) === new Date().toISOString().slice(0,10));
+  const evsHoyBanner = evsHoy.length > 0
+    ? el('div',{class:'today-chip', title:'Eventos registrados hoy en este equipo. Click para ir a Bitácora.',
+        onclick:()=>{tab='bitacora'; renderTabs(); renderTabBody();}},
+        `${evsHoy.length} evento${evsHoy.length>1?'s':''} hoy`,
+        el('span',{style:{marginLeft:'5px',opacity:.7}}, '→'))
+    : null;
+
   root.appendChild(el('div',{class:'view'},
     el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'10px',flexWrap:'wrap',gap:'8px'}},
-      el('div',{},
+      el('div',{style:{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}},
         el('button',{class:'ghost',onclick:()=>history.length>1?history.back():navigate('equipos')},'← Volver'),
-        el('h2',{style:{display:'inline-block',marginLeft:'8px'}},`${eq.equipo} · ${eq.inv}`)
+        el('h2',{style:{display:'inline-block',marginLeft:'4px'}},`${eq.equipo} · ${eq.inv}`),
+        evsHoyBanner
       ),
       el('div',{style:{display:'flex',gap:'6px'}},
         el('button',{class:'primary',onclick:()=>mpRapida({invDefault:eq.inv})},'+ MP'),
@@ -1528,13 +1568,37 @@ function renderMatrizMP(eq){
   const trP = el('tr',{}, el('td',{class:'lbl-row'},'P (Programación)'));
   const trR = el('tr',{}, el('td',{class:'lbl-row'},'R (Resultado)'));
   const year = new Date().getFullYear();
+  // Mapa de eventos MP por mes de este equipo (para tooltip)
+  const evsMPPorMes = {};
+  state.eventos.filter(e => e.inv === eq.inv && e.tipo === 'Mantención preventiva' && !e.anulado).forEach(ev => {
+    if(!ev.fecha) return;
+    const mIdx = new Date(ev.fecha + 'T00:00:00').getMonth();
+    const mes = MESES[mIdx];
+    if(!evsMPPorMes[mes] || ev.fecha > evsMPPorMes[mes].fecha) evsMPPorMes[mes] = ev;
+  });
   MESES.forEach((m, idx) => {
     const p = (eq.prog||{})[m] || '';
     const r = ((eq.registro||{})[m]||{}).R || '';
     const conflP = celdaTieneConflicto(eq.inv, m, 'P');
     const conflR = celdaTieneConflicto(eq.inv, m, 'R');
-    const tdP = el('td',{class:cellClass(p)+(conflP?' has-conflict':''), title: conflP?'Conflicto con maestro: '+(conflP.valorMaestro||'(vacío)'):(p && !r ? 'Click para registrar MP rápida en '+m : '')}, p||'');
-    const tdR = el('td',{class:cellClass(r)+(conflR?' has-conflict':''), title: conflR?'Conflicto con maestro: '+(conflR.valorMaestro||'(vacío)'):''}, r||'');
+    // Tooltip para celda R con resultado: muestra evento MP que la generó
+    let tipR = '';
+    if(conflR) tipR = 'Conflicto con maestro: '+(conflR.valorMaestro||'(vacío)');
+    else if(r){
+      const ev = evsMPPorMes[m];
+      if(ev){
+        tipR = `${m} · ${fmtFecha(ev.fecha)} · ${ev.ejecutor||'sin ejecutor'} · Resultado: ${r}` +
+               (ev.obs ? `\n${ev.obs.slice(0,140)}` : '');
+      } else {
+        tipR = `${m} · Resultado registrado: ${r} (sin evento asociado)`;
+      }
+    }
+    let tipP = '';
+    if(conflP) tipP = 'Conflicto con maestro: '+(conflP.valorMaestro||'(vacío)');
+    else if(p && !r) tipP = 'Click para registrar MP rápida en '+m;
+    else if(p) tipP = `${m} · Programación: ${p}`;
+    const tdP = el('td',{class:cellClass(p)+(conflP?' has-conflict':''), title: tipP}, p||'');
+    const tdR = el('td',{class:cellClass(r)+(conflR?' has-conflict':''), title: tipR}, r||'');
     if(conflP){
       tdP.onclick = ()=>navigate('conciliacion');
       tdP.style.cursor = 'pointer';
@@ -1930,7 +1994,13 @@ VIEWS.eventos = function(root, params){
         if(r === 'reprog') return /^C[1-8]$/.test(e.resultado||'');
         return e.resultado === r;
       })
-      .filter(e => !q || JSON.stringify(e).toLowerCase().includes(q))
+      .filter(e => {
+        if(!q) return true;
+        // Enriquecemos con datos del equipo: serie, marca, modelo, ubicación, unidad
+        const eq = findEquipo(e.inv);
+        const eqBlob = eq ? [eq.serie, eq.marca, eq.modelo, eq.ubic, eq.unidad, eq.fam].filter(Boolean).join(' ') : '';
+        return (JSON.stringify(e) + ' ' + eqBlob).toLowerCase().includes(q);
+      })
       .sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
     container.innerHTML = '';
     container.appendChild(el('div',{class:'muted',style:{fontSize:'12px',padding:'8px 0'}}, list.length+' eventos'));
@@ -2587,7 +2657,17 @@ function mpRapida(opts){
     }
   }
 
-  modal({title:`MP rápida · ${eq.inv} · ${eq.equipo}`, body: el('div',{},
+  const valoresIniciales = {
+    fecha: fecha.value, resultado: resultado.value,
+    ejecutor: ejecutor.value, obs: ''
+  };
+  function hasUnsavedData(){
+    return obs.value.trim() !== '' ||
+           fecha.value !== valoresIniciales.fecha ||
+           ejecutor.value !== valoresIniciales.ejecutor ||
+           resultado.value !== valoresIniciales.resultado;
+  }
+  modal({title:`MP rápida · ${eq.inv} · ${eq.equipo}`, hasUnsavedData, body: el('div',{},
     el('div',{class:'subtitle',style:{marginBottom:'14px'}}, (eq.servicio||'') + ' · ' + (eq.ubic||'')),
     el('div',{class:'grid-2'},
       formField('Fecha de la MP', fecha),
@@ -2602,8 +2682,12 @@ function mpRapida(opts){
     el('button',{onclick:()=>guardar(true), class:'primary'},'Guardar y siguiente'),
     el('button',{class:'primary',onclick:()=>guardar(false)},'Guardar')
   ]});
-  // Autofocus en fecha si el equipo cambió, o en el siguiente campo si todo viene precargado
-  setTimeout(()=> (ejecutor.value ? obs : fecha).focus(), 80);
+  // Autofocus reforzado: prioriza el primer campo vacío en este orden
+  setTimeout(()=>{
+    if(!fecha.value) fecha.focus();
+    else if(!ejecutor.value) ejecutor.focus();
+    else obs.focus();
+  }, 80);
 }
 
 //==============================================================
@@ -2809,7 +2893,14 @@ function nuevoEvento(opts){
   }
 
   function rebuild(){
-    const m = modal({title:'Nuevo evento', wide:true, body: build()});
+    const m = modal({title:'Nuevo evento', wide:true, body: build(),
+      hasUnsavedData: ()=>{
+        // Hay cambios si el usuario seleccionó tipo o llenó algún input visible
+        if(tipo) return true;
+        if(invSel && invSel !== (opts.invDefault||'')) return true;
+        return false;
+      }
+    });
   }
   rebuild();
 }
@@ -2860,6 +2951,15 @@ function editarEvento(ev){
   ]});
 }
 function anularEvento(ev){
+  // Si el evento se creó hace menos de 1 hora, advierte específicamente
+  let preAviso = '';
+  if(ev.ts){
+    const mins = Math.floor((Date.now() - new Date(ev.ts).getTime()) / 60000);
+    if(mins >= 0 && mins < 60){
+      preAviso = `\n\n⚠ Este evento se registró hace ${mins} minuto${mins!==1?'s':''}.\n¿Confirmas que quieres anularlo?`;
+      if(!confirm('Anular evento recién creado.'+preAviso)) return;
+    }
+  }
   const motivo = prompt('Motivo de anulación:');
   if(!motivo) return;
   ev.anulado = true; ev.motivoAnulacion = motivo;
@@ -2882,7 +2982,9 @@ function nuevoPendiente(opts){
   const fComp = el('input',{type:'date'});
   const fRec = el('input',{type:'date'});
 
-  modal({title:'Nuevo pendiente', body: el('div',{},
+  modal({title:'Nuevo pendiente',
+    hasUnsavedData: ()=> desc.value.trim() !== '' || ejec.value !== '' || fComp.value !== '' || fRec.value !== '',
+    body: el('div',{},
     el('div',{class:'grid-2'},
       formField('N° Inventario', el('div',{},invInput,dataList)),
       formField('Tipo', tipo)
