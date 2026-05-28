@@ -42,6 +42,20 @@ v0.2 [2026-05-28] Rediseño minimalista + tablas resumen clickeables.
   - Cada celda con valor navega a la vista correspondiente con filtros pre-aplicados.
   - Sistema de filtros vía params en cada vista (equipos, mp, pendientes, eventos).
   - Chip de filtros activos visible y limpiable en cada vista.
+v0.9 [2026-05-28] Auditoría + visibilidad de eventos anulados.
+  - FIX CRÍTICO de datos heredados: al cargar el state, migración limpia los
+    efectos huérfanos de eventos anulados en versiones previas (v0.7 y antes
+    no revertían). Si un evento MP anulado dejó un R="Si" en eq.registro y
+    no hay otra MP no anulada en ese mes, se limpia. Se recalcula estado y
+    ciclos. Idempotente: correr varias veces no rompe nada.
+  - Bitácora ahora muestra TAMBIÉN los eventos anulados, con badge rojo
+    "Anulado", texto tachado, motivo y fecha de anulación. Soluciona el
+    problema de "no aparece mi registro en la bitácora" — ahora siempre
+    queda visible la trazabilidad.
+  - Contador de la pestaña Bitácora separa activos y anulados: "Bitácora (3 + 1 anulado)".
+  - Auditoría: verificado que en todas las vistas y agregaciones los
+    eventos anulados se excluyen de conteos productivos (MP del mes,
+    matriz, dashboards, KPIs) pero se conservan en la bitácora.
 v0.8 [2026-05-28] Reversión de eventos anulados + alertas + columnas.
   - FIX CRÍTICO: anular un evento ahora revierte sus efectos sobre el equipo.
     · Si era MP con resultado → limpia el R del mes en la matriz (o usa el
@@ -317,6 +331,11 @@ table.data .num{font-variant-numeric:tabular-nums;text-align:right}
 .bitacora{display:flex;flex-direction:column;gap:0}
 .bitacora .ev{border-bottom:1px solid var(--border);padding:14px 0;font-size:13px}
 .bitacora .ev:last-child{border-bottom:none}
+.bitacora .ev.anulado{opacity:.55;background:#fef2f2;margin:0 -8px;padding-left:8px;padding-right:8px;border-bottom-color:#fecaca}
+.bitacora .ev.anulado .hd strong{text-decoration:line-through;color:var(--muted)}
+.bitacora .ev.anulado .obs{text-decoration:line-through;color:var(--muted)}
+.badge.anulado-badge{color:var(--noop);border-color:#f0c5c1;background:#fdf3f2;font-weight:600}
+.anulacion-info{margin-top:6px;padding:6px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:4px;font-size:12px;color:#991b1b;font-style:italic}
 .bitacora .ev .hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap}
 .bitacora .ev .hd strong{font-size:13px;font-weight:600}
 .bitacora .ev .hd .fecha{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
@@ -461,7 +480,7 @@ header.top nav button .nav-badge{display:inline-block;margin-left:6px;padding:0 
 <body>
 <div class="app">
   <header class="top">
-    <h1>HHHA <small>Equipos Críticos · v0.8</small></h1>
+    <h1>HHHA <small>Equipos Críticos · v0.9</small></h1>
     <nav id="nav"></nav>
     <div class="tools">
       <span id="state-indicator" class="state-indicator" title="">—</span>
@@ -505,7 +524,7 @@ const SEED = {"equipos":[{"id":1,"carpeta":1,"inv":"2-115361","fam":"Incubadoras
 //==============================================================
 // CONSTANTES & CATÁLOGOS
 //==============================================================
-const APP_VERSION = '0.8';
+const APP_VERSION = '0.9';
 const STORAGE_KEY = 'hhha_v1_data';
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 const MES_NUM = {Ene:0,Feb:1,Mar:2,Abr:3,May:4,Jun:5,Jul:6,Ago:7,Sep:8,Oct:9,Nov:10,Dic:11};
@@ -580,6 +599,59 @@ function migrate(d){
   if(d.counters.importacion == null) d.counters.importacion = (d.importaciones.length||0) + 1;
   d.__v = APP_VERSION;
   return d;
+}
+
+// Limpia efectos huérfanos de eventos anulados que quedaron de versiones previas.
+// Idempotente: correr varias veces no rompe nada.
+function limpiarEfectosAnulados(){
+  let cambios = 0;
+  // Para cada equipo, revisar cada mes del registro
+  state.equipos.forEach(eq => {
+    if(!eq.registro) return;
+    Object.keys(eq.registro).forEach(mes => {
+      const r = (eq.registro[mes] || {}).R;
+      if(!r) return;
+      // ¿Hay un evento MP no anulado en este equipo/mes que justifique el R?
+      const mIdx = MES_NUM[mes];
+      const hayValido = state.eventos.some(ev =>
+        ev.inv === eq.inv && !ev.anulado && ev.tipo === 'Mantención preventiva' &&
+        ev.resultado && ev.fecha && new Date(ev.fecha+'T00:00:00').getMonth() === mIdx
+      );
+      if(!hayValido){
+        // Limpia el R huérfano
+        delete eq.registro[mes].R;
+        if(Object.keys(eq.registro[mes]).length === 0) delete eq.registro[mes];
+        cambios++;
+      }
+    });
+  });
+  // Recalcular estado de cada equipo
+  state.equipos.forEach(eq => {
+    const antes = eq.estado;
+    recalcEstadoEquipo(eq);
+    if(antes !== eq.estado) cambios++;
+  });
+  // Revisar ciclos: si todos sus eventos están anulados, marcar ciclo como anulado
+  state.ciclos.forEach(c => {
+    if(c.estado === 'anulado') return;
+    const eventosVivos = state.eventos.filter(e => !e.anulado && e.folio === c.folio);
+    if(eventosVivos.length === 0){
+      c.estado = 'anulado';
+      c.anulado = true;
+      cambios++;
+    }
+  });
+  // Anular pendientes auto con eventoOrigen anulado
+  state.pendientes.forEach(p => {
+    if(p.anulado || !p.eventoOrigen) return;
+    const ev = state.eventos.find(e => e.id === p.eventoOrigen);
+    if(ev && ev.anulado && p.estado !== 'cerrado'){
+      p.anulado = true;
+      p.motivoAnulacion = 'Evento MP origen anulado (limpieza automática)';
+      cambios++;
+    }
+  });
+  return cambios;
 }
 function persistirState(){
   // Devuelve {ok, bytes, error}.
@@ -731,6 +803,7 @@ function audit(entidad, idEnt, campo, vOld, vNew){
 //==============================================================
 function findEquipo(inv){ return state.equipos.find(e => e.inv === inv); }
 function eventosDe(inv){ return state.eventos.filter(e => e.inv === inv && !e.anulado).sort((a,b)=> (a.fecha||'').localeCompare(b.fecha||'')); }
+function eventosDeTodos(inv){ return state.eventos.filter(e => e.inv === inv).sort((a,b)=> (a.fecha||'').localeCompare(b.fecha||'')); }
 function pendientesDe(inv){ return state.pendientes.filter(p => p.inv === inv && !p.anulado); }
 function ciclosDe(inv){ return state.ciclos.filter(c => c.inv === inv); }
 function ciclosAbiertosDe(inv){ return state.ciclos.filter(c => c.inv === inv && c.estado === 'abierto'); }
@@ -1511,6 +1584,7 @@ VIEWS.equipo = function(root, params){
   }
   recalcEstadoEquipo(eq);
   const evs = eventosDe(eq.inv);
+  const evsAnulados = state.eventos.filter(e => e.inv === eq.inv && e.anulado);
   const ciclos = ciclosDe(eq.inv);
   const pends = pendientesDe(eq.inv);
 
@@ -1519,7 +1593,10 @@ VIEWS.equipo = function(root, params){
   const tabs = el('div',{class:'tabs'});
   function renderTabs(){
     tabs.innerHTML = '';
-    [['datos','Datos generales'],['mp','Programación MP'],['bitacora',`Bitácora (${evs.length})`],['ciclos',`Ciclos correctivos (${ciclos.length})`],['pendientes',`Pendientes (${pends.filter(p=>p.estado!=='cerrado').length}/${pends.length})`]].forEach(([k,l])=>{
+    const lblBit = evsAnulados.length > 0
+      ? `Bitácora (${evs.length} + ${evsAnulados.length} anulado${evsAnulados.length>1?'s':''})`
+      : `Bitácora (${evs.length})`;
+    [['datos','Datos generales'],['mp','Programación MP'],['bitacora', lblBit],['ciclos',`Ciclos correctivos (${ciclos.length})`],['pendientes',`Pendientes (${pends.filter(p=>p.estado!=='cerrado').length}/${pends.length})`]].forEach(([k,l])=>{
       tabs.appendChild(el('button',{class:tab===k?'active':'',onclick:()=>{tab=k;renderTabs();renderTabBody();}},l));
     });
   }
@@ -1673,14 +1750,23 @@ function renderMatrizMP(eq){
 }
 
 function renderBitacora(eq){
-  const evs = eventosDe(eq.inv).slice().reverse();
-  if(evs.length === 0) return el('div',{class:'empty'},'Sin eventos registrados.');
+  const todos = eventosDeTodos(eq.inv).slice().reverse();
+  const activos = todos.filter(e => !e.anulado);
+  const anulados = todos.filter(e => e.anulado);
+  if(todos.length === 0) return el('div',{class:'empty'},'Sin eventos registrados.');
   return el('div',{class:'section'},
-    el('h3',{},'Bitácora — hoja de vida'),
-    el('div',{class:'bitacora'}, ...evs.map(ev => el('div',{class:'ev'},
+    el('h3',{},
+      'Bitácora — hoja de vida',
+      anulados.length > 0
+        ? el('small',{style:{fontWeight:'400',color:'var(--muted)',marginLeft:'8px',textTransform:'none',letterSpacing:'0'}},
+            `${activos.length} activo${activos.length!==1?'s':''} · ${anulados.length} anulado${anulados.length!==1?'s':''}`)
+        : null
+    ),
+    el('div',{class:'bitacora'}, ...todos.map(ev => el('div',{class:'ev'+(ev.anulado?' anulado':'')},
       el('div',{class:'hd'},
         el('div',{}, el('strong',{}, ev.tipo), ' ',
-          ev.oficial==='Sí'? el('span',{class:'badge ofic-si'},'Oficial') : el('span',{class:'badge ofic-no'},'Borrador'),
+          ev.anulado ? el('span',{class:'badge anulado-badge'},'Anulado') :
+            (ev.oficial==='Sí' ? el('span',{class:'badge ofic-si'},'Oficial') : el('span',{class:'badge ofic-no'},'Borrador')),
           ev.folio ? el('span',{class:'pill'}, 'Folio: '+ev.folio) : null,
           ev.resultado ? el('span',{class:'pill'}, 'R: '+ev.resultado) : null
         ),
@@ -1692,11 +1778,16 @@ function renderBitacora(eq){
         ev.estado ? 'Estado resultante: '+ev.estado : ''
       ),
       ev.obs ? el('div',{class:'obs'}, ev.obs) : null,
-      el('div',{style:{marginTop:'6px',display:'flex',gap:'5px'}},
+      ev.anulado ? el('div',{class:'anulacion-info'},
+        '⊘ Anulado',
+        ev.fechaAnulacion ? ' · ' + new Date(ev.fechaAnulacion).toLocaleString('es-CL') : '',
+        ev.motivoAnulacion ? ' · Motivo: '+ev.motivoAnulacion : ''
+      ) : null,
+      !ev.anulado ? el('div',{style:{marginTop:'6px',display:'flex',gap:'5px'}},
         ev.oficial !== 'Sí' ? el('button',{class:'small primary',onclick:()=>oficializarEvento(ev)},'Oficializar') : null,
         el('button',{class:'small',onclick:()=>editarEvento(ev)},'Editar'),
         el('button',{class:'small danger',onclick:()=>anularEvento(ev)},'Anular')
-      )
+      ) : null
     )))
   );
 }
@@ -3674,6 +3765,14 @@ function refreshNav(){ buildNav(); $$('#nav button').forEach(b => b.classList.to
 
 function bootstrap(){
   state = load();
+  if(state){
+    // State existente: limpiar efectos huérfanos de eventos anulados (idempotente)
+    const cambios = limpiarEfectosAnulados();
+    if(cambios > 0){
+      save({internal:true});
+      setTimeout(()=>toast(`Migración: ${cambios} inconsistencia${cambios>1?'s':''} de versiones previas corregida${cambios>1?'s':''}.`, 'success'), 600);
+    }
+  }
   if(!state){
     state = init();
     // Reconstruir ciclos desde eventos seed
