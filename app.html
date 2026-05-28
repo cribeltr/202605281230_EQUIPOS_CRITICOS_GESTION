@@ -42,6 +42,22 @@ v0.2 [2026-05-28] Rediseño minimalista + tablas resumen clickeables.
   - Cada celda con valor navega a la vista correspondiente con filtros pre-aplicados.
   - Sistema de filtros vía params en cada vista (equipos, mp, pendientes, eventos).
   - Chip de filtros activos visible y limpiable en cada vista.
+v0.11 [2026-05-28] Resolución masiva de conflictos + evento sintético al aceptar.
+  - FIX: al aceptar un conflicto mp_diferencia de la columna R con valor en el
+    catálogo de resultados MP (Si/C1-C8/FS/NU/Baja/No), se crea automáticamente
+    un evento sintético "Mantención preventiva" con fecha=día 15 del mes,
+    resultado del maestro, observación "[Conciliación] origen importación
+    maestro" y campo origen='conciliacion'. Soluciona el problema de bitácora
+    vacía aunque la matriz mostraba la MP ejecutada.
+  - Selección masiva en Conciliación:
+    · Checkbox por cada card de conflicto.
+    · Barra fija arriba con "N seleccionados" + 3 acciones bulk: Aceptar
+      maestro, Mantener programa, Posponer.
+    · Botón "Seleccionar todos los visibles" (respeta filtros activos).
+    · Save único al final del bulk, no por cada conflicto (mucho más rápido
+      con 958 conflictos).
+    · Confirmación previa si seleccionas más de 50.
+  - Toast resumen tras bulk: "X resueltos · Y eventos sintéticos creados".
 v0.10 [2026-05-28] Plantillas de asignación MP del mes.
   - En la vista "MP del mes": 2 botones nuevos.
     · "Descargar plantilla": genera Plantilla_Asignacion_<Mes>_<Año>.xlsx con
@@ -419,6 +435,17 @@ header.top nav button .nav-badge{display:inline-block;margin-left:6px;padding:0 
 .mp-matrix td.has-conflict::after{content:"!";position:absolute;top:0;right:2px;font-size:10px;color:var(--noop);font-weight:700;line-height:1}
 
 /* Conciliación */
+.conf-row{display:flex;gap:0;margin-bottom:10px;align-items:stretch}
+.conf-checkbox{padding:18px 8px 0 0;display:flex;align-items:flex-start;justify-content:center;min-width:32px}
+.conf-checkbox input[type=checkbox]{width:18px;height:18px;cursor:pointer;margin:0}
+.conf-row .conf-card{flex:1;margin-bottom:0}
+.bulk-bar{position:sticky;top:0;z-index:20;background:var(--accent);color:#fff;padding:10px 16px;border-radius:6px;margin-bottom:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;box-shadow:0 4px 12px rgba(0,0,0,.15)}
+.bulk-bar .bulk-count{font-weight:600;font-size:13px;margin-right:6px}
+.bulk-bar button{background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.3);font-weight:500}
+.bulk-bar button:hover{background:rgba(255,255,255,.2);border-color:rgba(255,255,255,.5)}
+.bulk-bar button.primary{background:#fff;color:var(--accent);border-color:#fff}
+.bulk-bar button.primary:hover{background:#f5f5f5}
+
 .conf-card{border:1px solid var(--border);border-radius:6px;background:var(--surface);padding:14px 16px;margin-bottom:10px}
 .conf-card.urgent{border-left:3px solid var(--noop)}
 .conf-card.altas{border-left:3px solid var(--accent-2)}
@@ -495,7 +522,7 @@ header.top nav button .nav-badge{display:inline-block;margin-left:6px;padding:0 
 <body>
 <div class="app">
   <header class="top">
-    <h1>HHHA <small>Equipos Críticos · v0.10</small></h1>
+    <h1>HHHA <small>Equipos Críticos · v0.11</small></h1>
     <nav id="nav"></nav>
     <div class="tools">
       <span id="state-indicator" class="state-indicator" title="">—</span>
@@ -539,7 +566,7 @@ const SEED = {"equipos":[{"id":1,"carpeta":1,"inv":"2-115361","fam":"Incubadoras
 //==============================================================
 // CONSTANTES & CATÁLOGOS
 //==============================================================
-const APP_VERSION = '0.10';
+const APP_VERSION = '0.11';
 const STORAGE_KEY = 'hhha_v1_data';
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 const MES_NUM = {Ene:0,Feb:1,Mar:2,Abr:3,May:4,Jun:5,Jul:6,Ago:7,Sep:8,Oct:9,Nov:10,Dic:11};
@@ -2342,6 +2369,9 @@ function compararMaestro(parsed, importacionId){
   const conflictosNuevos = [];
   const todos = new Set([...Object.keys(parsed.pmp), ...Object.keys(parsed.reg)]);
   const invsProg = new Set(state.equipos.map(e => e.inv));
+  // Año del archivo extraído del nombre de la hoja (PMP_2026 / Registro_MP-2026)
+  const yearMatch = (parsed.sheetPMP||parsed.sheetReg||'').match(/(\d{4})/);
+  const year = yearMatch ? parseInt(yearMatch[1]) : new Date().getFullYear();
 
   // 1. Equipos nuevos: en maestro pero no en programa
   todos.forEach(inv => {
@@ -2401,7 +2431,7 @@ function compararMaestro(parsed, importacionId){
           if(!fromPMP) return;
           registrarOActualizarConflicto({
             tipo:'mp_diferencia', inv, equipo: eq.equipo,
-            hoja:'PMP', mes, campo:'P',
+            hoja:'PMP', mes, campo:'P', year,
             valorPrograma: valProg, valorMaestro: valMast,
             importacionId
           }, conflictosNuevos);
@@ -2421,7 +2451,7 @@ function compararMaestro(parsed, importacionId){
           if(!fromReg) return; // equipo no está en el maestro, ya se manejó como faltante
           registrarOActualizarConflicto({
             tipo:'mp_diferencia', inv, equipo: eq.equipo,
-            hoja:'Registro', mes, campo,
+            hoja:'Registro', mes, campo, year,
             valorPrograma: vp, valorMaestro: vm,
             importacionId
           }, conflictosNuevos);
@@ -2455,8 +2485,13 @@ function registrarOActualizarConflicto(data, buffer){
   });
 }
 
-function resolverConflicto(c, accion, valorManual){
+// Catálogo de resultados válidos para crear evento MP sintético desde Conciliación.
+const RESULTADOS_MP = new Set(['Si','C1','C2','C3','C4','C5','C6','C7','C8','FS','NU','Baja','No']);
+
+function resolverConflicto(c, accion, valorManual, opts){
+  const skipSave = opts && opts.skipSave;
   const eq = findEquipo(c.inv);
+  let eventoCreado = null;
   if(c.tipo === 'mp_diferencia'){
     if(accion === 'aceptar_maestro' || accion === 'manual'){
       const v = accion === 'manual' ? valorManual : c.valorMaestro;
@@ -2470,6 +2505,40 @@ function resolverConflicto(c, accion, valorManual){
         if(!eq.registro[c.mes].P && !eq.registro[c.mes].R) delete eq.registro[c.mes];
       }
       c.resolucionValor = v;
+      // Si aceptamos un resultado R con valor válido del catálogo MP → crear evento sintético
+      if(c.hoja === 'Registro' && c.campo === 'R' && v && RESULTADOS_MP.has(v)){
+        // Buscar si ya existe un evento MP no anulado en ese mes para no duplicar
+        const mIdx = MES_NUM[c.mes];
+        const yearStr = (c.year || new Date().getFullYear()).toString();
+        const yaExiste = state.eventos.some(ev =>
+          ev.inv === eq.inv && !ev.anulado && ev.tipo === 'Mantención preventiva' &&
+          ev.fecha && new Date(ev.fecha+'T00:00:00').getMonth() === mIdx &&
+          ev.fecha.startsWith(yearStr)
+        );
+        if(!yaExiste){
+          const fecha = `${yearStr}-${String(mIdx+1).padStart(2,'0')}-15`;
+          const ev = {
+            id: state.counters.evento++,
+            inv: eq.inv, equipo: eq.equipo, servicio: eq.servicio, fam: eq.fam,
+            tipo: 'Mantención preventiva',
+            fecha, fechaReg: hoyLocal(),
+            resultado: v,
+            ejecutor: getPref('ultimoEjecutor', null) || 'Personal externo',
+            estado: v === 'Si' ? 'operativo' : v === 'Baja' ? 'baja' : (eq.estado||'operativo'),
+            obs: `[Conciliación] Importado desde maestro · Importación #${c.importacionId||'-'}`,
+            oficial: 'No',
+            anulado: false,
+            origen: 'conciliacion',
+            creadoPor: 'Cristian',
+            ts: new Date().toISOString(),
+            conflictoOrigen: c.id
+          };
+          state.eventos.push(ev);
+          aplicarEfectosEvento(ev);
+          audit('evento', ev.id, 'creado_sintetico', null, 'conciliacion');
+          eventoCreado = ev;
+        }
+      }
     }
     if(accion === 'mantener_programa'){
       c.resolucionValor = c.valorPrograma;
@@ -2525,8 +2594,11 @@ function resolverConflicto(c, accion, valorManual){
   if(imp){
     imp.resueltos = (imp.resueltos || 0) + 1;
   }
-  save();
-  refreshNav();
+  if(!skipSave){
+    save();
+    refreshNav();
+  }
+  return {eventoCreado};
 }
 
 function nombreCampoConflicto(c){
@@ -2609,6 +2681,51 @@ VIEWS.conciliacion = function(root, params){
   );
   const searchConf = el('input',{type:'search',placeholder:'Buscar por inv, mes, valor…'});
 
+  // Selección masiva
+  const seleccion = new Set();
+  const bulkBar = el('div',{class:'bulk-bar', style:{display:'none'}});
+  let listaVisible = []; // referencia a la última lista filtrada para "seleccionar todos"
+
+  function renderBulkBar(){
+    bulkBar.innerHTML = '';
+    if(seleccion.size === 0){
+      bulkBar.style.display = 'none';
+      return;
+    }
+    bulkBar.style.display = 'flex';
+    bulkBar.appendChild(el('span',{class:'bulk-count'},
+      `${seleccion.size} seleccionado${seleccion.size>1?'s':''}`));
+    bulkBar.appendChild(el('button',{class:'small',onclick:()=>{seleccion.clear();render();}},'Limpiar selección'));
+    bulkBar.appendChild(el('div',{style:{flex:'1'}}));
+    bulkBar.appendChild(el('button',{class:'small primary',onclick:()=>aplicarBulk('aceptar_maestro')},'✓ Aceptar maestro a todos'));
+    bulkBar.appendChild(el('button',{class:'small',onclick:()=>aplicarBulk('mantener_programa')},'✗ Mantener programa en todos'));
+    bulkBar.appendChild(el('button',{class:'small ghost',onclick:()=>aplicarBulk('posponer')},'⏸ Posponer todos'));
+  }
+
+  function aplicarBulk(accion){
+    if(seleccion.size > 50){
+      if(!confirm(`Vas a aplicar "${accion}" a ${seleccion.size} conflictos. Esta acción NO se puede deshacer en lote. ¿Continuar?`)) return;
+    }
+    const ids = [...seleccion];
+    let aplicados = 0, eventosSinteticos = 0;
+    ids.forEach(id => {
+      const c = state.conflictos.find(x => x.id === id);
+      if(!c) return;
+      if(c.estado !== 'pendiente' && c.estado !== 'pospuesto') return;
+      const r = resolverConflicto(c, accion, null, {skipSave:true});
+      aplicados++;
+      if(r && r.eventoCreado) eventosSinteticos++;
+    });
+    seleccion.clear();
+    save();
+    refreshNav();
+    const detalle = eventosSinteticos > 0
+      ? `${aplicados} resueltos · ${eventosSinteticos} evento${eventosSinteticos>1?'s':''} sintético${eventosSinteticos>1?'s':''} creado${eventosSinteticos>1?'s':''} en bitácora`
+      : `${aplicados} resueltos`;
+    toast(detalle, 'success');
+    render();
+  }
+
   function render(){
     // Historial
     histBox.innerHTML = '';
@@ -2656,12 +2773,25 @@ VIEWS.conciliacion = function(root, params){
     });
 
     listBox.innerHTML = '';
-    listBox.appendChild(el('h3',{},`Por resolver ${lista.length>0 ? '· '+lista.length+' conflictos' : ''}`));
+    listaVisible = lista;
+    const head = el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',gap:'12px',flexWrap:'wrap'}},
+      el('h3',{style:{margin:0}}, `Por resolver ${lista.length>0 ? '· '+lista.length+' conflictos' : ''}`),
+      lista.length > 0 ? el('div',{style:{display:'flex',gap:'6px',alignItems:'center'}},
+        el('button',{class:'small',onclick:()=>{
+          // Solo selecciona los pendientes/pospuestos
+          lista.filter(c => c.estado === 'pendiente' || c.estado === 'pospuesto').forEach(c => seleccion.add(c.id));
+          render();
+        }},'Seleccionar todos los visibles'),
+        el('small',{class:'muted'}, lista.filter(c => c.estado === 'pendiente' || c.estado === 'pospuesto').length+' resolubles')
+      ) : null
+    );
+    listBox.appendChild(head);
+    renderBulkBar();
     if(lista.length === 0){
       listBox.appendChild(el('div',{class:'empty small'}, state.conflictos.length === 0 ? 'No hay conflictos.' : 'Sin conflictos con los filtros actuales.'));
       return;
     }
-    lista.forEach(c => listBox.appendChild(renderConflicto(c, render)));
+    lista.forEach(c => listBox.appendChild(renderConflictoConCheckbox(c, render, seleccion)));
   }
 
   filtersBox.appendChild(el('div',{class:'grow'}, searchConf));
@@ -2677,10 +2807,30 @@ VIEWS.conciliacion = function(root, params){
     histBox,
     el('h3',{},'Filtros'),
     filtersBox,
+    bulkBar,
     listBox
   ));
   render();
 };
+
+function renderConflictoConCheckbox(c, onChange, seleccion){
+  const wrapper = el('div',{class:'conf-row'});
+  const resoluble = c.estado === 'pendiente' || c.estado === 'pospuesto';
+  if(resoluble){
+    const cb = el('input',{type:'checkbox', checked: seleccion.has(c.id) ? 'checked' : false, onchange:e=>{
+      if(e.target.checked) seleccion.add(c.id);
+      else seleccion.delete(c.id);
+      onChange();
+    }});
+    cb.checked = seleccion.has(c.id);
+    const cbWrap = el('div',{class:'conf-checkbox'}, cb);
+    wrapper.appendChild(cbWrap);
+  } else {
+    wrapper.appendChild(el('div',{class:'conf-checkbox'}, el('span',{class:'muted',style:{fontSize:'11px'}},'✓')));
+  }
+  wrapper.appendChild(renderConflicto(c, onChange));
+  return wrapper;
+}
 
 function renderConflicto(c, onChange){
   const eq = findEquipo(c.inv);
