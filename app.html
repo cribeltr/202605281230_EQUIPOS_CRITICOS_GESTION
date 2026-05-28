@@ -42,6 +42,16 @@ v0.2 [2026-05-28] Rediseño minimalista + tablas resumen clickeables.
   - Cada celda con valor navega a la vista correspondiente con filtros pre-aplicados.
   - Sistema de filtros vía params en cada vista (equipos, mp, pendientes, eventos).
   - Chip de filtros activos visible y limpiable en cada vista.
+v0.23 [2026-05-28] Distinguir visualmente eventos auto-completados en bitácora.
+  - Diagnóstico 2-115785: usuario veía 2 MPs (May 18 manual + Feb 15 sintético
+    de v0.21 al subir maestro) sin distinción visual → confusión "no registré
+    el de Feb".
+  - Fix: badge 🔗 Auto-maestro para eventos origen='conciliacion_auto',
+    🔗 Conciliación para 'conciliacion', ⚡ Lote para 'masivo'.
+  - Borde lateral verde + fondo sutil para eventos auto en bitácora.
+  - Timestamp de creación visible junto a la fecha del evento (DD-MM HH:MM)
+    para distinguir "cuándo se creó" vs "fecha del evento físico".
+  - Tooltips explican el origen de cada badge.
 v0.22 [2026-05-28] Auditoría de diseño: iconografía unificada en botones.
   - Gramática visual consistente:
     · ➕ crear (MP, Evento, Pendiente, Registrar MP a todos, Nuevo pendiente)
@@ -507,6 +517,8 @@ table.data .num{font-variant-numeric:tabular-nums;text-align:right}
 .bitacora .ev.anulado{opacity:.55;background:#fef2f2;margin:0 -8px;padding-left:8px;padding-right:8px;border-bottom-color:#fecaca}
 .bitacora .ev.anulado .hd strong{text-decoration:line-through;color:var(--muted)}
 .bitacora .ev.anulado .obs{text-decoration:line-through;color:var(--muted)}
+.bitacora .ev.auto{background:linear-gradient(to right, rgba(13,122,107,.06), transparent);border-left:3px solid var(--accent);margin:0 -8px;padding-left:8px;padding-right:8px}
+.badge.auto-badge{color:var(--accent);border-color:var(--accent);background:var(--accent-soft);font-weight:600;cursor:help}
 .badge.anulado-badge{color:var(--noop);border-color:#f0c5c1;background:#fdf3f2;font-weight:600}
 .anulacion-info{margin-top:6px;padding:6px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:4px;font-size:12px;color:#991b1b;font-style:italic}
 .bitacora .ev .hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap}
@@ -736,7 +748,7 @@ header.top nav button .nav-badge{display:inline-block;margin-left:6px;padding:0 
 <body>
 <div class="app">
   <header class="top">
-    <h1>HHHA <small>Equipos Críticos · v0.22</small></h1>
+    <h1>HHHA <small>Equipos Críticos · v0.23</small></h1>
     <nav id="nav"></nav>
     <div class="tools">
       <span id="state-indicator" class="state-indicator" title="">—</span>
@@ -781,7 +793,7 @@ const SEED = {"equipos":[{"id":1,"carpeta":1,"inv":"2-115361","fam":"Incubadoras
 //==============================================================
 // CONSTANTES & CATÁLOGOS
 //==============================================================
-const APP_VERSION = '0.22';
+const APP_VERSION = '0.23';
 const STORAGE_KEY = 'hhha_v1_data';
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 const MES_NUM = {Ene:0,Feb:1,Mar:2,Abr:3,May:4,Jun:5,Jul:6,Ago:7,Sep:8,Oct:9,Nov:10,Dic:11};
@@ -2147,15 +2159,20 @@ function renderBitacora(eq){
             `${activos.length} activo${activos.length!==1?'s':''} · ${anulados.length} anulado${anulados.length!==1?'s':''}`)
         : null
     ),
-    el('div',{class:'bitacora'}, ...todos.map(ev => el('div',{class:'ev'+(ev.anulado?' anulado':'')},
+    el('div',{class:'bitacora'}, ...todos.map(ev => el('div',{class:'ev'+(ev.anulado?' anulado':'')+(ev.origen==='conciliacion_auto'||ev.origen==='conciliacion'?' auto':'')},
       el('div',{class:'hd'},
         el('div',{}, el('strong',{}, ev.tipo), ' ',
           ev.anulado ? el('span',{class:'badge anulado-badge'},'Anulado') :
             (ev.oficial==='Sí' ? el('span',{class:'badge ofic-si'},'Oficial') : el('span',{class:'badge ofic-no'},'Borrador')),
+          ev.origen === 'conciliacion_auto' ? el('span',{class:'badge auto-badge',title:'Evento creado automáticamente al subir el maestro (v0.21). Fecha = día 15 del mes. No fue registrado manualmente.'},'🔗 Auto-maestro') : null,
+          ev.origen === 'conciliacion' ? el('span',{class:'badge auto-badge',title:'Evento creado al aceptar un conflicto del maestro en Conciliación.'},'🔗 Conciliación') : null,
+          ev.origen === 'masivo' ? el('span',{class:'badge ofic-no',title:'Registrado en lote desde MP del mes'},'⚡ Lote') : null,
           ev.folio ? el('span',{class:'pill'}, 'Folio: '+ev.folio) : null,
           ev.resultado ? el('span',{class:'pill'}, 'R: '+ev.resultado) : null
         ),
-        el('span',{class:'fecha'}, fmtFecha(ev.fecha))
+        el('span',{class:'fecha'}, fmtFecha(ev.fecha),
+          ev.ts ? el('small',{class:'muted',style:{display:'block',fontSize:'10px',marginTop:'2px'}}, 'creado '+new Date(ev.ts).toLocaleString('es-CL',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})) : null
+        )
       ),
       el('div',{class:'meta'},
         ev.ejecutor ? 'Ejecutor: '+ev.ejecutor+' · ' : '',
