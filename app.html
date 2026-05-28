@@ -42,6 +42,15 @@ v0.2 [2026-05-28] Rediseño minimalista + tablas resumen clickeables.
   - Cada celda con valor navega a la vista correspondiente con filtros pre-aplicados.
   - Sistema de filtros vía params en cada vista (equipos, mp, pendientes, eventos).
   - Chip de filtros activos visible y limpiable en cada vista.
+v0.12 [2026-05-28] Validación mes plantilla + migración estado desconocido.
+  - subirPlantillaMP detecta el mes del nombre del archivo
+    (Plantilla_Asignacion_<Mes>_<Año>.xlsx → Ene/Feb/.../Dic, Enero/Febrero/...).
+    Si difiere del mes seleccionado en el dropdown, muestra diálogo con tres
+    opciones: "Cargar en el mes del archivo", "Cargar en el mes del dropdown",
+    "Cancelar". Evita asignaciones al mes equivocado por descuido.
+  - Migración limpiarEfectosAnulados ahora también realinea equipos del state
+    pre-v0.8: equipos con estado 'operativo' que no tienen ningún evento no
+    anulado con estado declarado pasan a 'desconocido' (criterio actual).
 v0.11 [2026-05-28] Resolución masiva de conflictos + evento sintético al aceptar.
   - FIX: al aceptar un conflicto mp_diferencia de la columna R con valor en el
     catálogo de resultados MP (Si/C1-C8/FS/NU/Baja/No), se crea automáticamente
@@ -522,7 +531,7 @@ header.top nav button .nav-badge{display:inline-block;margin-left:6px;padding:0 
 <body>
 <div class="app">
   <header class="top">
-    <h1>HHHA <small>Equipos Críticos · v0.11</small></h1>
+    <h1>HHHA <small>Equipos Críticos · v0.12</small></h1>
     <nav id="nav"></nav>
     <div class="tools">
       <span id="state-indicator" class="state-indicator" title="">—</span>
@@ -566,7 +575,7 @@ const SEED = {"equipos":[{"id":1,"carpeta":1,"inv":"2-115361","fam":"Incubadoras
 //==============================================================
 // CONSTANTES & CATÁLOGOS
 //==============================================================
-const APP_VERSION = '0.11';
+const APP_VERSION = '0.12';
 const STORAGE_KEY = 'hhha_v1_data';
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 const MES_NUM = {Ene:0,Feb:1,Mar:2,Abr:3,May:4,Jun:5,Jul:6,Ago:7,Sep:8,Oct:9,Nov:10,Dic:11};
@@ -667,7 +676,8 @@ function limpiarEfectosAnulados(){
       }
     });
   });
-  // Recalcular estado de cada equipo
+  // Recalcular estado de cada equipo (recalcEstadoEquipo ya devuelve 'desconocido'
+  // si no hay eventos con estado declarado — realinea state pre-v0.8 que usaba 'operativo')
   state.equipos.forEach(eq => {
     const antes = eq.estado;
     recalcEstadoEquipo(eq);
@@ -3614,6 +3624,34 @@ function exportData(){
 
 const MES_ESPANOL = {Ene:'Enero',Feb:'Febrero',Mar:'Marzo',Abr:'Abril',May:'Mayo',Jun:'Junio',Jul:'Julio',Ago:'Agosto',Sep:'Septiembre',Oct:'Octubre',Nov:'Noviembre',Dic:'Diciembre'};
 
+// Detecta el índice de mes (0-11) en un nombre de archivo. Soporta variantes
+// en español: Ene/Enero, Feb/Febrero, Mar/Marzo, Abr/Abril, May/Mayo, Jun/Junio,
+// Jul/Julio, Ago/Agosto, Sep/Septiembre, Oct/Octubre, Nov/Noviembre, Dic/Diciembre.
+// Retorna {idx, year} o null si no detecta.
+function mesDelNombreArchivo(nombre){
+  const norm = (nombre||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+  const meses = [
+    ['ene','enero'],['feb','febrero'],['mar','marzo'],['abr','abril'],
+    ['may','mayo'],['jun','junio'],['jul','julio'],['ago','agosto'],
+    ['sep','septiembre','set','sept'],['oct','octubre'],['nov','noviembre'],['dic','diciembre']
+  ];
+  let foundIdx = null;
+  // Buscar por palabra completa con boundary o separadores
+  for(let i = 0; i < meses.length; i++){
+    for(const alias of meses[i]){
+      const re = new RegExp(`(^|[_\\s\\-\\.])${alias}([_\\s\\-\\.]|$)`, 'i');
+      if(re.test(norm)){
+        foundIdx = i;
+        break;
+      }
+    }
+    if(foundIdx != null) break;
+  }
+  if(foundIdx == null) return null;
+  const yearMatch = norm.match(/(20\d{2})/);
+  return {idx: foundIdx, year: yearMatch ? parseInt(yearMatch[1]) : null};
+}
+
 function descargarPlantillaMP(year, monthIdx){
   if(typeof XLSX === 'undefined'){ toast('Parser Excel no disponible','error'); return; }
   const mes = NUM_MES[monthIdx];
@@ -3679,6 +3717,31 @@ function descargarPlantillaMP(year, monthIdx){
 
 async function subirPlantillaMP(file, year, monthIdx){
   if(typeof XLSX === 'undefined'){ toast('Parser Excel no disponible','error'); return; }
+  // Detectar mes del nombre del archivo y comparar con el dropdown
+  const detectado = mesDelNombreArchivo(file.name);
+  let yearFinal = year, monthIdxFinal = monthIdx;
+  if(detectado && detectado.idx !== monthIdx){
+    const mesArchivo = NUM_MES[detectado.idx];
+    const yearArch = detectado.year || year;
+    const mesDropdown = NUM_MES[monthIdx];
+    const opciones =
+      `El archivo "${file.name}" parece ser de ${MES_ESPANOL[mesArchivo]} ${yearArch}.\n` +
+      `El mes seleccionado en pantalla es ${MES_ESPANOL[mesDropdown]} ${year}.\n\n` +
+      `Aceptar → cargar en ${MES_ESPANOL[mesArchivo]} ${yearArch} (mes del archivo)\n` +
+      `Cancelar → no cargar (no se hizo cambio)`;
+    if(!confirm(opciones)){
+      toast('Carga cancelada por mismatch de mes.', 'warn-backup');
+      return;
+    }
+    monthIdxFinal = detectado.idx;
+    if(detectado.year) yearFinal = detectado.year;
+  } else if(detectado && detectado.year && detectado.year !== year){
+    if(!confirm(`El archivo es de ${detectado.year} pero la vista está en ${year}. ¿Cargar en ${detectado.year}?`)){
+      toast('Carga cancelada.', 'warn-backup');
+      return;
+    }
+    yearFinal = detectado.year;
+  }
   try{
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, {type:'array'});
@@ -3696,7 +3759,7 @@ async function subirPlantillaMP(file, year, monthIdx){
       return;
     }
 
-    const keyMes = `${year}-${String(monthIdx+1).padStart(2,'0')}`;
+    const keyMes = `${yearFinal}-${String(monthIdxFinal+1).padStart(2,'0')}`;
     state.asignacionesMP[keyMes] = state.asignacionesMP[keyMes] || {};
     const ejecutoresSet = new Set(EJECUTORES);
 
@@ -3719,8 +3782,8 @@ async function subirPlantillaMP(file, year, monthIdx){
     }
     save();
 
-    const mes = NUM_MES[monthIdx];
-    let detalle = `${cargadas} asignaciones cargadas en ${mes} ${year}`;
+    const mes = NUM_MES[monthIdxFinal];
+    let detalle = `${cargadas} asignaciones cargadas en ${mes} ${yearFinal}`;
     if(sobrescritas > 0) detalle += ` (${sobrescritas} sobrescritas)`;
     const ignorTotal = ignoradas.invNoExiste.length + ignoradas.respInvalido.length + ignoradas.sinResp;
     if(ignorTotal > 0){
