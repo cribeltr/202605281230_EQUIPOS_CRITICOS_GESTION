@@ -42,6 +42,19 @@ v0.2 [2026-05-28] Rediseño minimalista + tablas resumen clickeables.
   - Cada celda con valor navega a la vista correspondiente con filtros pre-aplicados.
   - Sistema de filtros vía params en cada vista (equipos, mp, pendientes, eventos).
   - Chip de filtros activos visible y limpiable en cada vista.
+v0.14 [2026-05-28] Rediseño dual theme + grabador auto-start enriquecido.
+  - Tema claro suave (off-white tibio, acento verde-azul #0d7a6b) por default;
+    toggle ☀/🌙 en el header conmuta a tema oscuro moderno. Persiste en prefs.theme.
+  - Variables CSS organizadas con :root + [data-theme="dark"] para contraste AA.
+  - Grabador auto-start al cargar la app (configurable en prefs.recorderAutoStart).
+    Captura nuevos eventos:
+    · think_time: pausas >3s entre acciones (señal de duda)
+    · hover_long: hover >2s sobre el mismo elemento (una vez por elemento)
+    · scroll_depth: hitos 25/50/75/100% por vista
+    · form_error: cuando aparece toast tipo error
+    · modal_abort: modal cerrado sin guardar (con campo descartado)
+  - Al detener, calcula meta.metrics: vistas visitadas, eventos creados,
+    clicks repetidos, tiempo activo vs idle, duración formularios.
 v0.13 [2026-05-28] Agrupación de conflictos + hash de archivos + etiquetado.
   - Conciliación: nuevo selector "Agrupar por" (Sin agrupar / Tipo / Servicio /
     Equipo). En modo agrupado, cabecera por grupo con contador de pendientes y
@@ -206,28 +219,58 @@ v0.3 [2026-05-28] Conciliación con archivo maestro.
 -->
 <style>
 :root{
-  --bg:#ffffff;
+  /* Tema CLARO suave (default) — off-white tibio, antifatiga */
+  --bg:#fafaf7;
   --surface:#ffffff;
-  --surface-2:#fafafa;
-  --border:#ececec;
-  --border-strong:#d4d4d4;
-  --text:#111;
-  --text-2:#333;
-  --muted:#888;
-  --muted-2:#aaa;
-  --accent:#111;
-  --accent-2:#0066cc;
-  --hover:#f5f5f5;
-  --soft:#f7f7f7;
+  --surface-2:#f4f3ef;
+  --border:#e8e6df;
+  --border-strong:#cfcdc4;
+  --text:#1a1a1a;
+  --text-2:#3a3a36;
+  --muted:#7a786f;
+  --muted-2:#a8a59a;
+  --accent:#0d7a6b;
+  --accent-2:#0d7a6b;
+  --accent-soft:#e0f0ec;
+  --hover:#efeee9;
+  --soft:#f4f3ef;
   --op:#1f7a3a;
   --noop:#b3261e;
   --st:#a86a00;
-  --baja:#777;
+  --baja:#7a786f;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.04);
+  --shadow:0 2px 8px rgba(0,0,0,.06);
+  --shadow-lg:0 12px 28px rgba(0,0,0,.10);
   --font:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
 }
+[data-theme="dark"]{
+  /* Tema OSCURO moderno — gris-azul profundo */
+  --bg:#15181d;
+  --surface:#1d2128;
+  --surface-2:#252a32;
+  --border:#2e333b;
+  --border-strong:#3d434c;
+  --text:#e8eaed;
+  --text-2:#c5c8cc;
+  --muted:#8a8f96;
+  --muted-2:#5e6168;
+  --accent:#5eb8a8;
+  --accent-2:#5eb8a8;
+  --accent-soft:#1d3633;
+  --hover:#252a32;
+  --soft:#1d2128;
+  --op:#5dc77c;
+  --noop:#f47466;
+  --st:#e9a857;
+  --baja:#8a8f96;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.3);
+  --shadow:0 2px 8px rgba(0,0,0,.35);
+  --shadow-lg:0 12px 28px rgba(0,0,0,.5);
+}
 *{box-sizing:border-box}
-html,body{margin:0;padding:0;height:100%;font-family:var(--font);font-size:14px;color:var(--text);background:var(--bg);-webkit-font-smoothing:antialiased;font-feature-settings:"cv11","ss01";line-height:1.4}
+html,body{margin:0;padding:0;height:100%;font-family:var(--font);font-size:14px;color:var(--text);background:var(--bg);-webkit-font-smoothing:antialiased;font-feature-settings:"cv11","ss01";line-height:1.4;transition:background-color .2s,color .2s}
+.theme-btn{font-size:14px;width:30px;height:28px;padding:0!important;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border)!important}
 button{font-family:inherit;font-size:inherit;cursor:pointer;border:1px solid var(--border-strong);background:var(--surface);color:var(--text);padding:6px 12px;border-radius:4px;transition:background .12s,border-color .12s,color .12s;font-weight:500}
 button:hover:not(:disabled){background:var(--hover)}
 button:disabled{opacity:.4;cursor:not-allowed}
@@ -328,7 +371,7 @@ table.data .num{font-variant-numeric:tabular-nums;text-align:right}
 .badge.creado{color:var(--muted);background:var(--soft)}
 .badge.abierto{color:var(--st);border-color:#ecd4a3;background:#fdf6e8}
 .badge.cerrado{color:var(--op);border-color:#bbe2c9;background:#f0faf3}
-.badge.ofic-si{color:var(--accent-2);border-color:#bfdbfe;background:#eff6ff}
+.badge.ofic-si{color:var(--accent);border-color:var(--accent);background:var(--accent-soft)}
 .badge.ofic-no{color:var(--muted);background:var(--soft)}
 .badge.mp-si{color:var(--op);border-color:#bbe2c9;background:#f0faf3}
 .badge.mp-cause{color:var(--st);border-color:#ecd4a3;background:#fdf6e8}
@@ -562,10 +605,11 @@ header.top nav button .nav-badge{display:inline-block;margin-left:6px;padding:0 
 <body>
 <div class="app">
   <header class="top">
-    <h1>HHHA <small>Equipos Críticos · v0.13</small></h1>
+    <h1>HHHA <small>Equipos Críticos · v0.14</small></h1>
     <nav id="nav"></nav>
     <div class="tools">
       <span id="state-indicator" class="state-indicator" title="">—</span>
+      <button id="btn-theme" title="Cambiar tema claro/oscuro" class="theme-btn">🌞</button>
       <span class="user-tag">Cristian</span>
       <button id="btn-excel" title="Exportar a Excel (.xlsx)">Excel</button>
       <button id="btn-export" title="Exportar backup JSON">Backup</button>
@@ -606,7 +650,7 @@ const SEED = {"equipos":[{"id":1,"carpeta":1,"inv":"2-115361","fam":"Incubadoras
 //==============================================================
 // CONSTANTES & CATÁLOGOS
 //==============================================================
-const APP_VERSION = '0.13';
+const APP_VERSION = '0.14';
 const STORAGE_KEY = 'hhha_v1_data';
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 const MES_NUM = {Ene:0,Feb:1,Mar:2,Abr:3,May:4,Jun:5,Jul:6,Ago:7,Sep:8,Oct:9,Nov:10,Dic:11};
@@ -1098,6 +1142,18 @@ function diasEntreFechas(a, b){
 }
 function getPref(k, def){ return (state.prefs && state.prefs[k]) || def; }
 function setPref(k, v){ state.prefs = state.prefs || {}; state.prefs[k] = v; }
+
+function setTheme(theme){
+  document.documentElement.setAttribute('data-theme', theme);
+  setPref('theme', theme);
+  const btn = document.getElementById('btn-theme');
+  if(btn){ btn.textContent = theme === 'dark' ? '🌙' : '🌞'; btn.title = `Cambiar a tema ${theme==='dark'?'claro':'oscuro'}`; }
+  save({internal:true});
+}
+function toggleTheme(){
+  const cur = document.documentElement.getAttribute('data-theme') || 'light';
+  setTheme(cur === 'dark' ? 'light' : 'dark');
+}
 function toast(msg, type='', action){
   const t = el('div',{class:'toast '+type});
   t.appendChild(el('span',{}, msg));
@@ -1106,6 +1162,10 @@ function toast(msg, type='', action){
   }
   $('#toast-root').appendChild(t);
   setTimeout(()=>t.remove(), 4000);
+  // Captura para análisis: errores y warnings son señales útiles
+  if(type === 'error' && typeof recorder !== 'undefined' && recorder.status === 'recording'){
+    recorder.event('form_error', {mensaje: String(msg).slice(0,180)});
+  }
 }
 function badgeEstado(estado){
   const cls = {operativo:'op',no_operativo:'noop',en_servicio_tecnico:'st',baja:'baja',desconocido:'desconocido'}[estado] || '';
@@ -1122,9 +1182,12 @@ function modal({title, body, footer, wide=false, onClose, hasUnsavedData}){
   const root = $('#modal-root');
   root.innerHTML = '';
   function tryClose(reason){
-    // reason: 'backdrop' | 'esc' | 'x' | 'cancel'
-    if(reason === 'backdrop' && hasUnsavedData && hasUnsavedData()){
+    const had = hasUnsavedData && hasUnsavedData();
+    if(reason === 'backdrop' && had){
       if(!confirm('Hay datos sin guardar en el formulario. ¿Cerrar y descartar?')) return;
+    }
+    if(had && typeof recorder !== 'undefined' && recorder.status === 'recording'){
+      recorder.event('modal_abort', {titulo: title, reason});
     }
     close();
   }
@@ -4085,6 +4148,10 @@ const recorder = {
   status: 'idle', // idle | recording | paused
   events: [],
   startedAt: null,
+  lastEventAt: 0,
+  hoverStart: null, // {el, ts}
+  hoverReported: new WeakSet(),
+  scrollMilestones: {}, // {view: Set(25,50,75,100)}
   el: null,
   init(){
     this.el = $('#rec-widget');
@@ -4103,7 +4170,7 @@ const recorder = {
     document.addEventListener('input', e=>{
       if(this.status !== 'recording') return;
       if(e.target.closest('#rec-widget')) return;
-      if(e.target.type === 'password') return; // nunca passwords
+      if(e.target.type === 'password') return;
       this.event('input', this.descTarget(e.target), e);
     }, true);
     document.addEventListener('focusin', e=>{
@@ -4114,10 +4181,41 @@ const recorder = {
     document.addEventListener('keydown', e=>{
       if(this.status !== 'recording') return;
       if(e.target.closest('#rec-widget')) return;
-      // Atajos: ctrl/alt/meta + tecla
       if(e.ctrlKey || e.altKey || e.metaKey || ['Escape','Enter'].includes(e.key)){
         this.event('shortcut', {...this.descTarget(e.target), key:e.key, ctrl:e.ctrlKey, alt:e.altKey, meta:e.metaKey});
       }
+    }, true);
+    // Hover prolongado (>2s en mismo elem, una vez por elem)
+    document.addEventListener('mouseover', e=>{
+      if(this.status !== 'recording') return;
+      this.hoverStart = {el: e.target, ts: Date.now()};
+    }, true);
+    document.addEventListener('mouseout', e=>{
+      if(this.status !== 'recording' || !this.hoverStart) return;
+      const dur = Date.now() - this.hoverStart.ts;
+      if(dur > 2000 && !this.hoverReported.has(this.hoverStart.el) && !this.hoverStart.el.closest('#rec-widget')){
+        this.hoverReported.add(this.hoverStart.el);
+        this.event('hover_long', {...this.descTarget(this.hoverStart.el), durMs: dur});
+      }
+      this.hoverStart = null;
+    }, true);
+    // Scroll depth por vista
+    document.addEventListener('scroll', e=>{
+      if(this.status !== 'recording') return;
+      const t = e.target;
+      if(!t || !t.scrollTop) return;
+      if(!t.id && !t.tagName) return;
+      const max = t.scrollHeight - t.clientHeight;
+      if(max <= 0) return;
+      const pct = Math.round((t.scrollTop / max) * 100);
+      const view = currentView;
+      this.scrollMilestones[view] = this.scrollMilestones[view] || new Set();
+      [25,50,75,100].forEach(m => {
+        if(pct >= m && !this.scrollMilestones[view].has(m)){
+          this.scrollMilestones[view].add(m);
+          this.event('scroll_depth', {pct: m, view});
+        }
+      });
     }, true);
     window.addEventListener('error', e=>{
       if(this.status === 'recording'){
@@ -4165,8 +4263,19 @@ const recorder = {
   },
   event(tipo, target, raw){
     if(this.status !== 'recording') return;
+    const now = Date.now();
+    // Think time: si pasaron >3s desde el último evento de usuario, registrarlo
+    if(this.lastEventAt && ['click','input','focus','shortcut'].includes(tipo)){
+      const idleMs = now - this.lastEventAt;
+      if(idleMs > 3000){
+        this.events.push({
+          t: this.lastEventAt - this.startedAt,
+          tipo: 'think_time', durMs: idleMs, vista: currentView
+        });
+      }
+    }
     const ev = {
-      t: Date.now() - this.startedAt,
+      t: now - this.startedAt,
       tipo, ...target,
       vista: currentView, params: viewParams,
       estadoApp: {
@@ -4178,14 +4287,15 @@ const recorder = {
     };
     if(raw && raw.clientX != null) ev.click = {x:raw.clientX, y:raw.clientY};
     this.events.push(ev);
+    if(['click','input','focus','shortcut'].includes(tipo)) this.lastEventAt = now;
     this.updateUI();
   },
-  start(){
+  start(opts){
     if(this.status === 'paused'){ this.status='recording'; }
-    else { this.status='recording'; this.events=[]; this.startedAt = Date.now(); }
+    else { this.status='recording'; this.events=[]; this.startedAt = Date.now(); this.lastEventAt = 0; this.scrollMilestones = {}; this.hoverReported = new WeakSet(); }
     this.el.classList.remove('paused'); this.el.classList.add('recording');
     $('#rw-rec').disabled = true; $('#rw-pause').disabled = false; $('#rw-stop').disabled = false;
-    this.event('rec.start', {});
+    this.event('rec.start', {autoStart: !!(opts && opts.silent)});
     this.updateUI();
   },
   pause(){
@@ -4202,16 +4312,41 @@ const recorder = {
   stop(){
     if(this.status === 'idle') return;
     this.event('rec.stop',{});
+    // Calcular métricas resumen
+    const evs = this.events;
+    const vistas = new Set(evs.map(e => e.vista).filter(Boolean));
+    const clicks = evs.filter(e => e.tipo === 'click');
+    const selectorCounts = {};
+    clicks.forEach(c => { if(c.selector) selectorCounts[c.selector] = (selectorCounts[c.selector]||0)+1; });
+    const clicksRepetidos = Object.values(selectorCounts).filter(n => n >= 3).length;
+    const thinkTimes = evs.filter(e => e.tipo === 'think_time');
+    const idleTotal = thinkTimes.reduce((a,e)=>a+(e.durMs||0), 0);
+    const dur = Date.now() - this.startedAt;
+    const eventosCreadosInicio = (evs.find(e=>e.estadoApp)||{}).estadoApp?.eventos || 0;
+    const eventosCreadosFin = state.eventos.length;
     const sesion = {
       meta: {
         appVersion: APP_VERSION,
         ua: navigator.userAgent,
-        duracionMs: Date.now() - this.startedAt,
-        nEventos: this.events.length,
+        duracionMs: dur,
+        nEventos: evs.length,
         inicio: new Date(this.startedAt).toISOString(),
-        fin: new Date().toISOString()
+        fin: new Date().toISOString(),
+        metrics: {
+          vistasVisitadas: [...vistas],
+          totalClicks: clicks.length,
+          clicksRepetidos,
+          thinkTimes: thinkTimes.length,
+          idleMs: idleTotal,
+          activeMs: Math.max(0, dur - idleTotal),
+          eventosCreadosEnSesion: Math.max(0, eventosCreadosFin - eventosCreadosInicio),
+          errores: evs.filter(e => e.tipo === 'error' || e.tipo === 'console.error').length,
+          formErrors: evs.filter(e => e.tipo === 'form_error').length,
+          modalAborts: evs.filter(e => e.tipo === 'modal_abort').length,
+          hoverLong: evs.filter(e => e.tipo === 'hover_long').length
+        }
       },
-      eventos: this.events
+      eventos: evs
     };
     const stamp = new Date().toISOString().replace(/[-:]/g,'').slice(0,13);
     const blob = new Blob([JSON.stringify(sesion,null,2)],{type:'application/json'});
@@ -4328,7 +4463,14 @@ function bootstrap(){
   $('#btn-export').onclick = exportData;
   $('#btn-import').onclick = importData;
   $('#btn-reset').onclick = resetState;
+  $('#btn-theme').onclick = toggleTheme;
+  // Aplicar tema persistido
+  setTheme(getPref('theme', 'light'));
   recorder.init();
+  // Auto-start del grabador si el usuario no lo deshabilitó
+  if(getPref('recorderAutoStart', true) !== false){
+    setTimeout(()=>recorder.start({silent:true}), 300);
+  }
   refreshStateIndicator();
   navigate('dashboard');
 }
