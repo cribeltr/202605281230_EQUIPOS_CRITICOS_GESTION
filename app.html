@@ -42,6 +42,18 @@ v0.2 [2026-05-28] Rediseño minimalista + tablas resumen clickeables.
   - Cada celda con valor navega a la vista correspondiente con filtros pre-aplicados.
   - Sistema de filtros vía params en cada vista (equipos, mp, pendientes, eventos).
   - Chip de filtros activos visible y limpiable en cada vista.
+v0.13 [2026-05-28] Agrupación de conflictos + hash de archivos + etiquetado.
+  - Conciliación: nuevo selector "Agrupar por" (Sin agrupar / Tipo / Servicio /
+    Equipo). En modo agrupado, cabecera por grupo con contador de pendientes y
+    botones masivos "Aceptar maestro al grupo" / "Mantener programa al grupo".
+    Mucho más rápido para procesar +900 conflictos.
+  - Importaciones: cada subida calcula SHA-256 del contenido del archivo. Si
+    el mismo hash ya fue importado, pide confirmación con la fecha y resumen
+    de la importación previa. Evita acumular conflictos por reimportar el
+    mismo .xlsm sin cambios.
+  - Modal de pendiente: etiquetas más claras (Descripción / Tareas /
+    Seguimientos) con separación visual mejorada para evitar confusión entre
+    el textarea de descripción y el input de nueva tarea.
 v0.12 [2026-05-28] Validación mes plantilla + migración estado desconocido.
   - subirPlantillaMP detecta el mes del nombre del archivo
     (Plantilla_Asignacion_<Mes>_<Año>.xlsx → Ene/Feb/.../Dic, Enero/Febrero/...).
@@ -448,6 +460,25 @@ header.top nav button .nav-badge{display:inline-block;margin-left:6px;padding:0 
 .conf-checkbox{padding:18px 8px 0 0;display:flex;align-items:flex-start;justify-content:center;min-width:32px}
 .conf-checkbox input[type=checkbox]{width:18px;height:18px;cursor:pointer;margin:0}
 .conf-row .conf-card{flex:1;margin-bottom:0}
+/* Pendiente modal: secciones más claras */
+.pend-section{margin:18px 0;padding:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2)}
+.pend-section .pend-section-lbl{display:block;font-size:12px;font-weight:600;color:var(--text);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
+.pend-section .pend-section-hint{font-size:11px;color:var(--muted);margin-bottom:10px;font-style:italic}
+.pend-section textarea, .pend-section input[type=text]{background:var(--surface)}
+.pend-new-row{display:flex;align-items:center;gap:8px;margin-top:8px}
+.pend-new-row .plus-icon{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;flex-shrink:0;font-size:14px}
+.pend-new-row input{flex:1}
+
+.conf-group{margin-bottom:14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);overflow:hidden}
+.conf-group-hd{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--surface-2);border-bottom:1px solid var(--border);flex-wrap:wrap}
+.conf-group-hd .tw{cursor:pointer;color:var(--muted);font-size:11px;width:14px;display:inline-block}
+.conf-group-hd .lbl{cursor:pointer;font-weight:600;font-size:13px;flex:1;color:var(--text)}
+.conf-group-hd .cnt{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.conf-group-hd .acts{display:flex;gap:5px;flex-wrap:wrap}
+.conf-group-bd{padding:10px 12px;background:var(--surface)}
+.conf-group-bd .conf-row{margin-bottom:8px}
+.conf-group-bd .conf-row:last-child{margin-bottom:0}
+
 .bulk-bar{position:sticky;top:0;z-index:20;background:var(--accent);color:#fff;padding:10px 16px;border-radius:6px;margin-bottom:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;box-shadow:0 4px 12px rgba(0,0,0,.15)}
 .bulk-bar .bulk-count{font-weight:600;font-size:13px;margin-right:6px}
 .bulk-bar button{background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.3);font-weight:500}
@@ -531,7 +562,7 @@ header.top nav button .nav-badge{display:inline-block;margin-left:6px;padding:0 
 <body>
 <div class="app">
   <header class="top">
-    <h1>HHHA <small>Equipos Críticos · v0.12</small></h1>
+    <h1>HHHA <small>Equipos Críticos · v0.13</small></h1>
     <nav id="nav"></nav>
     <div class="tools">
       <span id="state-indicator" class="state-indicator" title="">—</span>
@@ -575,7 +606,7 @@ const SEED = {"equipos":[{"id":1,"carpeta":1,"inv":"2-115361","fam":"Incubadoras
 //==============================================================
 // CONSTANTES & CATÁLOGOS
 //==============================================================
-const APP_VERSION = '0.12';
+const APP_VERSION = '0.13';
 const STORAGE_KEY = 'hhha_v1_data';
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 const MES_NUM = {Ene:0,Feb:1,Mar:2,Abr:3,May:4,Jun:5,Jul:6,Ago:7,Sep:8,Oct:9,Nov:10,Dic:11};
@@ -2641,11 +2672,33 @@ VIEWS.conciliacion = function(root, params){
 
   async function procesar(file){
     progressBox.innerHTML = '';
-    const log = (msg, cls)=>{ const s = el('div',{class:'step '+(cls||'')}, msg); progressBox.appendChild(s); return s; };
     const box = el('div',{class:'imp-progress'});
     progressBox.appendChild(box);
-    const _orig = progressBox.appendChild.bind(progressBox);
     box.appendChild(el('div',{class:'step'}, `Archivo: ${file.name} (${(file.size/1024).toFixed(1)} KB)`));
+    // Hash SHA-256 para detectar duplicados
+    const s0 = el('div',{class:'step'}, 'Calculando hash del archivo…'); box.appendChild(s0);
+    let fileHash = null;
+    try{
+      const buf = await file.arrayBuffer();
+      const hashBuf = await crypto.subtle.digest('SHA-256', buf);
+      fileHash = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2,'0')).join('');
+      s0.textContent = `✓ Hash: ${fileHash.slice(0,16)}…`;
+      s0.classList.add('done');
+      const dup = state.importaciones.find(i => i.hash === fileHash);
+      if(dup){
+        const fechaDup = new Date(dup.fecha).toLocaleString('es-CL');
+        const msg = `Este archivo ya fue importado el ${fechaDup}.\n\n` +
+                    `Generó ${dup.generados||0} conflictos · ${dup.resueltos||0} resueltos.\n\n` +
+                    `¿Re-importar de todas formas? (Se recomienda cancelar si el contenido no cambió.)`;
+        if(!confirm(msg)){
+          box.appendChild(el('div',{class:'step error'}, '✗ Importación cancelada — archivo duplicado.'));
+          return;
+        }
+      }
+    } catch(e){
+      s0.textContent = '⚠ Hash no calculado (continuando)';
+      console.warn('hash failed', e);
+    }
     const s1 = el('div',{class:'step'}, 'Parseando hojas…'); box.appendChild(s1);
     try{
       const parsed = await parsearMaestro(file);
@@ -2656,6 +2709,7 @@ VIEWS.conciliacion = function(root, params){
         id: state.counters.importacion++,
         nombre: file.name,
         fecha: new Date().toISOString(),
+        hash: fileHash,
         totalMaestro: new Set([...Object.keys(parsed.pmp),...Object.keys(parsed.reg)]).size,
         totalPrograma: state.equipos.length,
         generados: 0, resueltos: 0
@@ -2690,6 +2744,12 @@ VIEWS.conciliacion = function(root, params){
     el('option',{value:'todos'},'Todos')
   );
   const searchConf = el('input',{type:'search',placeholder:'Buscar por inv, mes, valor…'});
+  const selAgrupar = el('select',{},
+    el('option',{value:''},'Sin agrupar'),
+    el('option',{value:'tipo'},'Agrupar por: Tipo + hoja + campo'),
+    el('option',{value:'servicio'},'Agrupar por: Servicio'),
+    el('option',{value:'equipo'},'Agrupar por: Equipo')
+  );
 
   // Selección masiva
   const seleccion = new Set();
@@ -2788,7 +2848,6 @@ VIEWS.conciliacion = function(root, params){
       el('h3',{style:{margin:0}}, `Por resolver ${lista.length>0 ? '· '+lista.length+' conflictos' : ''}`),
       lista.length > 0 ? el('div',{style:{display:'flex',gap:'6px',alignItems:'center'}},
         el('button',{class:'small',onclick:()=>{
-          // Solo selecciona los pendientes/pospuestos
           lista.filter(c => c.estado === 'pendiente' || c.estado === 'pospuesto').forEach(c => seleccion.add(c.id));
           render();
         }},'Seleccionar todos los visibles'),
@@ -2801,13 +2860,90 @@ VIEWS.conciliacion = function(root, params){
       listBox.appendChild(el('div',{class:'empty small'}, state.conflictos.length === 0 ? 'No hay conflictos.' : 'Sin conflictos con los filtros actuales.'));
       return;
     }
-    lista.forEach(c => listBox.appendChild(renderConflictoConCheckbox(c, render, seleccion)));
+
+    const modoAgrup = selAgrupar.value;
+    if(!modoAgrup){
+      lista.forEach(c => listBox.appendChild(renderConflictoConCheckbox(c, render, seleccion)));
+      return;
+    }
+
+    // Agrupar
+    const claveDe = (c) => {
+      if(modoAgrup === 'tipo'){
+        if(c.tipo === 'mp_diferencia') return `${c.tipo} · ${c.hoja||'-'} · ${c.campo||'-'}`;
+        return c.tipo;
+      }
+      if(modoAgrup === 'servicio'){
+        const eq = findEquipo(c.inv);
+        return eq && eq.servicio ? eq.servicio : '(sin servicio)';
+      }
+      if(modoAgrup === 'equipo'){
+        const eq = findEquipo(c.inv);
+        return `${c.inv} · ${eq?eq.equipo:'?'}`;
+      }
+      return 'Otros';
+    };
+    const grupos = new Map();
+    lista.forEach(c => {
+      const k = claveDe(c);
+      if(!grupos.has(k)) grupos.set(k, []);
+      grupos.get(k).push(c);
+    });
+    // Ordenar grupos por cantidad descendente
+    const gruposOrd = [...grupos.entries()].sort((a,b)=>b[1].length - a[1].length);
+    gruposOrd.forEach(([clave, items]) => {
+      const resolubles = items.filter(c => c.estado === 'pendiente' || c.estado === 'pospuesto');
+      const groupBox = el('div',{class:'conf-group'});
+      const expanded = {value: items.length <= 10}; // los grupos chicos parten expandidos
+      const header = el('div',{class:'conf-group-hd'});
+      const renderGroup = ()=>{
+        header.innerHTML = '';
+        header.appendChild(el('span',{class:'tw',onclick:()=>{expanded.value=!expanded.value;renderGroup();}}, expanded.value?'▼':'▶'));
+        header.appendChild(el('span',{class:'lbl',onclick:()=>{expanded.value=!expanded.value;renderGroup();}}, clave));
+        header.appendChild(el('span',{class:'cnt'}, `${items.length} · ${resolubles.length} resolubles`));
+        const acts = el('span',{class:'acts'});
+        if(resolubles.length > 0){
+          acts.appendChild(el('button',{class:'small primary',onclick:e=>{e.stopPropagation();aplicarGrupo(resolubles, 'aceptar_maestro', clave);}}, '✓ Aceptar maestro al grupo'));
+          acts.appendChild(el('button',{class:'small',onclick:e=>{e.stopPropagation();aplicarGrupo(resolubles, 'mantener_programa', clave);}}, '✗ Mantener programa al grupo'));
+          acts.appendChild(el('button',{class:'small',onclick:e=>{e.stopPropagation();resolubles.forEach(c => seleccion.add(c.id));render();}}, '+ Sel. grupo'));
+        }
+        header.appendChild(acts);
+        // body
+        if(groupBox.querySelector('.conf-group-bd')) groupBox.querySelector('.conf-group-bd').remove();
+        if(expanded.value){
+          const body = el('div',{class:'conf-group-bd'});
+          items.forEach(c => body.appendChild(renderConflictoConCheckbox(c, render, seleccion)));
+          groupBox.appendChild(body);
+        }
+      };
+      groupBox.appendChild(header);
+      renderGroup();
+      listBox.appendChild(groupBox);
+    });
+  }
+
+  function aplicarGrupo(items, accion, claveGrupo){
+    if(items.length > 20){
+      if(!confirm(`Vas a aplicar "${accion}" a ${items.length} conflictos del grupo "${claveGrupo}". ¿Continuar?`)) return;
+    }
+    let aplicados = 0, eventosSint = 0;
+    items.forEach(c => {
+      const r = resolverConflicto(c, accion, null, {skipSave:true});
+      aplicados++;
+      if(r && r.eventoCreado) eventosSint++;
+    });
+    save();
+    refreshNav();
+    const det = eventosSint > 0 ? `${aplicados} resueltos · ${eventosSint} eventos sintéticos creados` : `${aplicados} resueltos`;
+    toast(`Grupo "${claveGrupo}": ${det}`, 'success');
+    render();
   }
 
   filtersBox.appendChild(el('div',{class:'grow'}, searchConf));
   filtersBox.appendChild(selTipo);
   filtersBox.appendChild(selEstado);
-  [selTipo, selEstado, searchConf].forEach(x => x.addEventListener('input', render));
+  filtersBox.appendChild(selAgrupar);
+  [selTipo, selEstado, selAgrupar, searchConf].forEach(x => x.addEventListener('input', render));
 
   root.appendChild(el('div',{class:'view'},
     el('h2',{},'Conciliación'),
@@ -3521,14 +3657,29 @@ function abrirPendiente(p){
       formField('Ejecutor', ejec),
       el('div',{},el('label',{},'Equipo'), el('div',{style:{padding:'8px 0'}}, p.inv+' · '+(p.equipo||'')+' · '+(p.servicio||'')))
     ),
-    formField('Descripción', desc),
+    el('div',{class:'pend-section'},
+      el('label',{class:'pend-section-lbl'},'Descripción del pendiente'),
+      desc
+    ),
     el('div',{class:'grid-2'}, formField('Fecha compromiso', fComp), formField('Próximo recordatorio', fRec)),
-    el('h3',{},'Tareas'),
-    tareasBox,
-    el('div',{style:{marginTop:'8px'}}, nuevaTareaInput),
-    el('h3',{},'Seguimientos'),
-    seguimientosBox,
-    el('div',{style:{marginTop:'8px'}}, nuevoSegTxt)
+    el('div',{class:'pend-section'},
+      el('label',{class:'pend-section-lbl'}, 'Tareas atómicas (sub-pasos)'),
+      el('div',{class:'pend-section-hint'}, 'Divide el pendiente en pasos chequeables. Tipea abajo y presiona Enter.'),
+      tareasBox,
+      el('div',{class:'pend-new-row'},
+        el('span',{class:'plus-icon'},'+'),
+        nuevaTareaInput
+      )
+    ),
+    el('div',{class:'pend-section'},
+      el('label',{class:'pend-section-lbl'},'Seguimientos (notas con timestamp)'),
+      el('div',{class:'pend-section-hint'}, 'Bitácora interna del pendiente. Tipea abajo y presiona Enter.'),
+      seguimientosBox,
+      el('div',{class:'pend-new-row'},
+        el('span',{class:'plus-icon'},'+'),
+        nuevoSegTxt
+      )
+    )
   ), footer:[
     el('button',{class:'danger',onclick:()=>{
       if(!confirm('¿Anular pendiente?')) return;
