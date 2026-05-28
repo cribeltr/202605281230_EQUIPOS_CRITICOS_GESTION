@@ -19,180 +19,281 @@ v0.1 [2026-05-28] Prototipo inicial. Features:
   - Grabador de sesión flotante (clicks/inputs/focus/nav), exporta JSON.
   - Persistencia localStorage versionada (hhha_v1_data), export/import/reset.
   - Audit log de cambios.
+v0.2 [2026-05-28] Rediseño minimalista + tablas resumen clickeables.
+  - Paleta neutral (blanco/grises/un accent azul), tipografía sobria, bordes sutiles, espaciado amplio.
+  - Header simplificado, navegación con tipografía limpia, eliminado el efecto de tarjetas pesadas.
+  - Dashboard reorganizado en 3 tablas resumen + 1 fila compacta de KPIs:
+      · MP del año: filas=mes, cols=Si / Reprogramadas / FS / NU / Baja / Sin registro / Total.
+      · Equipos por servicio: filas=servicio, cols=Op / NoOp / ST / Baja / Pend. / Total.
+      · MP del mes por ejecutor: Asignadas / Ejecutadas / Pendientes / %.
+  - Cada celda con valor navega a la vista correspondiente con filtros pre-aplicados.
+  - Sistema de filtros vía params en cada vista (equipos, mp, pendientes, eventos).
+  - Chip de filtros activos visible y limpiable en cada vista.
+  - Regresiones verificadas: 7 tipos de evento, apertura/cierre auto de ciclo, MP con C1→pendiente,
+    baja con limpieza de meses posteriores, ficha completa, grabador de sesión, persistencia
+    localStorage, export/import/reset, audit log.
 -->
 <style>
 :root{
-  --bg:#f5f7fa; --surface:#ffffff; --border:#e1e5eb; --text:#1a2332; --muted:#6b7280;
-  --primary:#1e6fd9; --primary-h:#1858b3; --success:#0a8a4f; --warn:#c87b00; --danger:#c0392b;
-  --info:#2e6db3; --chip-bg:#eef3fb; --hover:#f0f4fa;
-  --op:#0a8a4f; --noop:#c0392b; --st:#c87b00; --baja:#6b7280;
-  --radius:6px; --shadow:0 1px 3px rgba(0,0,0,.08); --shadow-lg:0 8px 24px rgba(0,0,0,.15);
-  --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --bg:#ffffff;
+  --surface:#ffffff;
+  --surface-2:#fafafa;
+  --border:#ececec;
+  --border-strong:#d4d4d4;
+  --text:#111;
+  --text-2:#333;
+  --muted:#888;
+  --muted-2:#aaa;
+  --accent:#111;
+  --accent-2:#0066cc;
+  --hover:#f5f5f5;
+  --soft:#f7f7f7;
+  --op:#1f7a3a;
+  --noop:#b3261e;
+  --st:#a86a00;
+  --baja:#777;
+  --font:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
 }
 *{box-sizing:border-box}
-html,body{margin:0;padding:0;height:100%;font-family:var(--font);font-size:14px;color:var(--text);background:var(--bg)}
-button{font-family:inherit;font-size:inherit;cursor:pointer;border:1px solid var(--border);background:var(--surface);color:var(--text);padding:6px 12px;border-radius:var(--radius);transition:all .12s}
-button:hover:not(:disabled){background:var(--hover);border-color:#c7cfd9}
-button:active:not(:disabled){transform:translateY(1px)}
-button:disabled{opacity:.5;cursor:not-allowed}
-button.primary{background:var(--primary);color:#fff;border-color:var(--primary)}
-button.primary:hover:not(:disabled){background:var(--primary-h);border-color:var(--primary-h)}
-button.danger{background:var(--danger);color:#fff;border-color:var(--danger)}
-button.warn{background:var(--warn);color:#fff;border-color:var(--warn)}
-button.small{padding:3px 8px;font-size:12px}
-button.ghost{border-color:transparent;background:transparent}
-button.ghost:hover{background:var(--hover)}
-input,select,textarea{font-family:inherit;font-size:inherit;padding:6px 9px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);width:100%}
-input:focus,select:focus,textarea:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px rgba(30,111,217,.15)}
-input[readonly]{background:#f8fafc}
-label{display:block;font-size:12px;color:var(--muted);margin-bottom:3px;font-weight:500}
-textarea{min-height:60px;resize:vertical;font-family:inherit}
-.app{display:grid;grid-template-rows:48px 1fr;height:100vh;overflow:hidden}
-header.top{background:var(--text);color:#fff;display:flex;align-items:center;padding:0 14px;gap:18px;box-shadow:var(--shadow)}
-header.top h1{font-size:15px;margin:0;font-weight:600}
-header.top h1 small{font-weight:400;opacity:.65;margin-left:6px}
-header.top nav{display:flex;gap:2px;flex:1}
-header.top nav button{background:transparent;border:none;color:#cbd5e1;padding:8px 14px;border-radius:0;border-bottom:2px solid transparent}
-header.top nav button:hover{color:#fff;background:rgba(255,255,255,.06)}
-header.top nav button.active{color:#fff;border-bottom-color:var(--primary)}
-header.top .tools{display:flex;gap:8px;align-items:center;font-size:12px;color:#cbd5e1}
-header.top .tools button{font-size:12px;padding:4px 8px;color:#cbd5e1;border:1px solid #2d3a4d}
-header.top .tools button:hover{background:#2d3a4d;color:#fff}
-main{overflow:auto;padding:18px}
-.view{max-width:1400px;margin:0 auto}
-.view h2{margin:0 0 14px;font-size:20px;font-weight:600}
-.view h3{margin:18px 0 10px;font-size:15px;font-weight:600;color:var(--text)}
-.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;margin-bottom:18px}
-.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;box-shadow:var(--shadow)}
-.card .lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-bottom:4px}
-.card .val{font-size:22px;font-weight:600;color:var(--text)}
-.card .val small{font-size:12px;color:var(--muted);font-weight:400;margin-left:4px}
-.card.alert{border-left:3px solid var(--danger)}
-.card.warn{border-left:3px solid var(--warn)}
-.card.ok{border-left:3px solid var(--success)}
-.card.info{border-left:3px solid var(--info)}
-.toolbar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
-.toolbar .grow{flex:1;min-width:200px}
-.toolbar input[type=search]{padding-left:32px;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'><circle cx='11' cy='11' r='7'/><path d='m21 21-4.3-4.3'/></svg>");background-repeat:no-repeat;background-position:8px center;background-size:16px}
-table.data{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;font-size:13px}
-table.data th{background:#f1f4f8;text-align:left;padding:9px 10px;font-weight:600;border-bottom:1px solid var(--border);color:var(--text);white-space:nowrap;position:sticky;top:0;z-index:1}
-table.data td{padding:8px 10px;border-bottom:1px solid #eef1f5;vertical-align:top}
+html,body{margin:0;padding:0;height:100%;font-family:var(--font);font-size:14px;color:var(--text);background:var(--bg);-webkit-font-smoothing:antialiased;font-feature-settings:"cv11","ss01";line-height:1.4}
+button{font-family:inherit;font-size:inherit;cursor:pointer;border:1px solid var(--border-strong);background:var(--surface);color:var(--text);padding:6px 12px;border-radius:4px;transition:background .12s,border-color .12s,color .12s;font-weight:500}
+button:hover:not(:disabled){background:var(--hover)}
+button:disabled{opacity:.4;cursor:not-allowed}
+button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+button.primary:hover:not(:disabled){background:#000}
+button.danger{background:#fff;color:var(--noop);border-color:#e8c8c5}
+button.danger:hover:not(:disabled){background:#fff5f4;border-color:var(--noop)}
+button.small{padding:3px 9px;font-size:12px}
+button.ghost{border-color:transparent;background:transparent;color:var(--muted)}
+button.ghost:hover{background:var(--hover);color:var(--text)}
+input,select,textarea{font-family:inherit;font-size:inherit;padding:7px 10px;border:1px solid var(--border-strong);border-radius:4px;background:var(--surface);color:var(--text);width:100%}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--text)}
+input[readonly]{background:var(--soft);color:var(--muted)}
+label{display:block;font-size:11px;color:var(--muted);margin-bottom:4px;font-weight:500;text-transform:uppercase;letter-spacing:.04em}
+textarea{min-height:64px;resize:vertical;font-family:inherit;line-height:1.5}
+
+.app{display:grid;grid-template-rows:52px 1fr;height:100vh;overflow:hidden;background:var(--bg)}
+header.top{background:var(--surface);color:var(--text);display:flex;align-items:center;padding:0 22px;gap:24px;border-bottom:1px solid var(--border)}
+header.top h1{font-size:14px;margin:0;font-weight:600;letter-spacing:-.01em}
+header.top h1 small{font-weight:400;color:var(--muted);margin-left:8px}
+header.top nav{display:flex;gap:0;flex:1;align-items:center;height:100%}
+header.top nav button{background:transparent;border:none;color:var(--muted);padding:0 14px;height:100%;border-radius:0;border-bottom:2px solid transparent;font-weight:500;font-size:13px;letter-spacing:-.005em}
+header.top nav button:hover{color:var(--text);background:transparent}
+header.top nav button.active{color:var(--text);border-bottom-color:var(--accent)}
+header.top .tools{display:flex;gap:4px;align-items:center;font-size:12px}
+header.top .tools button{font-size:12px;padding:5px 10px;color:var(--muted);border:1px solid var(--border)}
+header.top .tools button:hover{color:var(--text);background:var(--hover)}
+header.top .user-tag{color:var(--muted);font-size:12px;margin-right:6px}
+
+main{overflow:auto;padding:28px 32px 60px}
+.view{max-width:1280px;margin:0 auto}
+.view h2{margin:0 0 6px;font-size:22px;font-weight:600;letter-spacing:-.015em}
+.view h3{margin:24px 0 12px;font-size:13px;font-weight:600;color:var(--text);text-transform:uppercase;letter-spacing:.05em}
+.subtitle{color:var(--muted);font-size:13px;margin-bottom:24px}
+
+/* KPI strip — minimal */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0;border:1px solid var(--border);border-radius:6px;margin-bottom:28px;background:var(--surface);overflow:hidden}
+.kpi{padding:14px 18px;border-right:1px solid var(--border);cursor:pointer;transition:background .1s}
+.kpi:last-child{border-right:none}
+.kpi:hover{background:var(--hover)}
+.kpi .lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-weight:500;margin-bottom:6px}
+.kpi .val{font-size:24px;font-weight:600;color:var(--text);letter-spacing:-.02em}
+.kpi .val small{font-size:12px;color:var(--muted);font-weight:400;margin-left:4px}
+.kpi.alert .val{color:var(--noop)}
+.kpi.warn .val{color:var(--st)}
+
+/* Summary tables — clickeables */
+.sum-table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:6px;overflow:hidden;font-size:13px;margin-bottom:24px}
+.sum-table th{background:var(--surface-2);text-align:right;padding:10px 12px;font-weight:500;border-bottom:1px solid var(--border);color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+.sum-table th:first-child{text-align:left}
+.sum-table td{padding:9px 12px;border-bottom:1px solid var(--border);text-align:right;font-variant-numeric:tabular-nums}
+.sum-table td:first-child{text-align:left;font-weight:500;color:var(--text)}
+.sum-table tr:last-child td{border-bottom:none}
+.sum-table tr.total-row{background:var(--surface-2);font-weight:600}
+.sum-table tr.total-row td{border-top:1px solid var(--border-strong)}
+.sum-table tr:hover:not(.total-row){background:var(--soft)}
+.sum-table td.cell{cursor:pointer;color:var(--text);transition:color .1s}
+.sum-table td.cell:hover{color:var(--accent-2);background:#f0f7ff}
+.sum-table td.cell.zero{color:var(--muted-2);cursor:default}
+.sum-table td.cell.zero:hover{color:var(--muted-2);background:transparent}
+.sum-table td.cell .v{font-weight:500}
+.sum-section{margin-bottom:32px}
+.sum-section-hd{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+.sum-section-hd h3{margin:0}
+.sum-section-hd .hint{font-size:12px;color:var(--muted)}
+
+/* Toolbar */
+.toolbar{display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+.toolbar .grow{flex:1;min-width:240px}
+.toolbar input[type=search]{padding-left:34px;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'><circle cx='11' cy='11' r='7'/><path d='m21 21-4.3-4.3'/></svg>");background-repeat:no-repeat;background-position:11px center;background-size:15px}
+
+/* Filter chips */
+.filters{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:14px;min-height:24px}
+.filter-chip{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;background:var(--soft);border:1px solid var(--border);border-radius:99px;font-size:12px;color:var(--text-2)}
+.filter-chip .x{cursor:pointer;color:var(--muted);font-weight:500}
+.filter-chip .x:hover{color:var(--text)}
+.filter-chip .k{color:var(--muted);font-size:11px}
+.filter-clear{font-size:12px;color:var(--muted);cursor:pointer;padding:3px 8px;border:none;background:transparent}
+.filter-clear:hover{color:var(--text);text-decoration:underline}
+
+/* Data tables */
+table.data{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:6px;overflow:hidden;font-size:13px}
+table.data th{background:var(--surface-2);text-align:left;padding:10px 12px;font-weight:500;border-bottom:1px solid var(--border);color:var(--muted);white-space:nowrap;position:sticky;top:0;z-index:1;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+table.data td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:top}
 table.data tr:last-child td{border-bottom:none}
 table.data tr.clickable{cursor:pointer}
-table.data tr.clickable:hover{background:var(--hover)}
-table.data td.actions{white-space:nowrap}
-.badge{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600;line-height:1.5;white-space:nowrap}
-.badge.op{background:#dcf3e7;color:var(--op)}
-.badge.noop{background:#fbe1de;color:var(--noop)}
-.badge.st{background:#fce8cc;color:var(--st)}
-.badge.baja{background:#e8eaee;color:var(--baja)}
-.badge.creado{background:#e8eaee;color:#475569}
-.badge.abierto{background:#fce8cc;color:var(--st)}
-.badge.cerrado{background:#dcf3e7;color:var(--op)}
-.badge.ofic-si{background:#dde9fb;color:var(--info)}
-.badge.ofic-no{background:#f3f4f6;color:var(--muted)}
-.badge.mp-si{background:#dcf3e7;color:var(--op)}
-.badge.mp-cause{background:#fce8cc;color:var(--st)}
-.badge.mp-no{background:#fbe1de;color:var(--noop)}
-.tag{display:inline-block;padding:1px 7px;border-radius:4px;font-size:11px;background:var(--chip-bg);color:var(--info);margin-right:4px}
-.empty{text-align:center;padding:40px;color:var(--muted);background:var(--surface);border:1px dashed var(--border);border-radius:var(--radius)}
-.empty.small{padding:18px}
-.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+table.data tr.clickable:hover{background:var(--soft)}
+table.data td.actions{white-space:nowrap;text-align:right}
+table.data .num{font-variant-numeric:tabular-nums;text-align:right}
+
+/* Badges — bordes en lugar de fondos pesados */
+.badge{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;font-weight:500;line-height:1.7;white-space:nowrap;border:1px solid var(--border-strong);background:var(--surface);color:var(--text-2)}
+.badge.op{color:var(--op);border-color:#bbe2c9;background:#f0faf3}
+.badge.noop{color:var(--noop);border-color:#f0c5c1;background:#fdf3f2}
+.badge.st{color:var(--st);border-color:#ecd4a3;background:#fdf6e8}
+.badge.baja{color:var(--baja);border-color:var(--border-strong);background:var(--soft)}
+.badge.creado{color:var(--muted);background:var(--soft)}
+.badge.abierto{color:var(--st);border-color:#ecd4a3;background:#fdf6e8}
+.badge.cerrado{color:var(--op);border-color:#bbe2c9;background:#f0faf3}
+.badge.ofic-si{color:var(--accent-2);border-color:#bfdbfe;background:#eff6ff}
+.badge.ofic-no{color:var(--muted);background:var(--soft)}
+.badge.mp-si{color:var(--op);border-color:#bbe2c9;background:#f0faf3}
+.badge.mp-cause{color:var(--st);border-color:#ecd4a3;background:#fdf6e8}
+.badge.mp-no{color:var(--noop);border-color:#f0c5c1;background:#fdf3f2}
+.tag{display:inline-block;padding:1px 7px;border-radius:3px;font-size:11px;background:var(--soft);color:var(--muted);margin-right:4px;border:1px solid var(--border)}
+.pill{display:inline-block;padding:1px 7px;font-size:11px;border-radius:3px;background:var(--soft);color:var(--muted);margin-left:6px;font-variant-numeric:tabular-nums}
+
+/* Empty states */
+.empty{text-align:center;padding:48px 24px;color:var(--muted);background:var(--surface);border:1px dashed var(--border);border-radius:6px;font-size:13px}
+.empty.small{padding:22px}
+
+/* Layout helpers */
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
 .row{display:flex;gap:10px;align-items:flex-end}
 .row > *{flex:1}
-.row > .narrow{flex:0 0 110px}
-.section{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:14px;box-shadow:var(--shadow)}
+
+/* Section card */
+.section{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:18px;margin-bottom:18px}
 .section h3{margin-top:0}
-.kv{display:grid;grid-template-columns:140px 1fr;gap:6px 12px;font-size:13px}
-.kv dt{color:var(--muted);font-weight:500}
+
+/* Key-value */
+.kv{display:grid;grid-template-columns:140px 1fr;gap:8px 16px;font-size:13px}
+.kv dt{color:var(--muted);font-weight:400}
 .kv dd{margin:0;color:var(--text)}
-.mp-matrix{width:100%;border-collapse:collapse;font-size:12px;background:var(--surface)}
-.mp-matrix th,.mp-matrix td{border:1px solid var(--border);padding:5px 7px;text-align:center;min-width:42px}
-.mp-matrix th{background:#f1f4f8;font-weight:600}
-.mp-matrix .lbl-row{background:#fafbfd;text-align:right;font-weight:600;color:var(--muted);padding-right:10px}
-.mp-cell-x{background:#fef9c3;color:#a16207;font-weight:600}
-.mp-cell-r{background:#ddd6fe;color:#5b21b6;font-weight:600}
-.mp-cell-ra{background:#fbcfe8;color:#9d174d;font-weight:600}
-.mp-cell-pm{background:#bfdbfe;color:#1e40af;font-weight:600}
-.mp-cell-si{background:#bbf7d0;color:#166534;font-weight:600}
-.mp-cell-c{background:#fed7aa;color:#9a3412;font-weight:600}
-.mp-cell-fs{background:#fecaca;color:#991b1b;font-weight:600}
-.mp-cell-baja{background:#e5e7eb;color:#374151;font-weight:600}
-.mp-cell-nu{background:#fde68a;color:#854d0e;font-weight:600}
-.modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;z-index:100;padding:20px}
-.modal{background:var(--surface);border-radius:8px;box-shadow:var(--shadow-lg);max-width:780px;width:100%;max-height:92vh;display:flex;flex-direction:column}
+
+/* MP matrix */
+.mp-matrix{width:100%;border-collapse:collapse;font-size:12px;background:var(--surface);font-variant-numeric:tabular-nums}
+.mp-matrix th,.mp-matrix td{border:1px solid var(--border);padding:6px 8px;text-align:center;min-width:46px}
+.mp-matrix th{background:var(--surface-2);font-weight:500;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+.mp-matrix .lbl-row{background:var(--surface-2);text-align:right;font-weight:500;color:var(--muted);padding-right:12px}
+.mp-cell-x{background:#fef9c3;color:#854d0e}
+.mp-cell-r{background:#ede9fe;color:#5b21b6}
+.mp-cell-ra{background:#fce7f3;color:#9d174d}
+.mp-cell-pm{background:#dbeafe;color:#1e40af}
+.mp-cell-si{background:#dcfce7;color:#166534}
+.mp-cell-c{background:#fed7aa;color:#9a3412}
+.mp-cell-fs{background:#fecaca;color:#991b1b}
+.mp-cell-baja{background:#e5e7eb;color:#374151}
+.mp-cell-nu{background:#fef3c7;color:#854d0e}
+
+/* Modal */
+.modal-backdrop{position:fixed;inset:0;background:rgba(17,17,17,.45);display:flex;align-items:center;justify-content:center;z-index:100;padding:24px}
+.modal{background:var(--surface);border-radius:8px;box-shadow:0 20px 50px rgba(0,0,0,.18);max-width:780px;width:100%;max-height:92vh;display:flex;flex-direction:column}
 .modal.wide{max-width:1100px}
-.modal header{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--border)}
-.modal header h2{margin:0;font-size:17px;font-weight:600}
-.modal .body{padding:18px;overflow:auto;flex:1}
-.modal footer{padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;background:#fafbfd}
-.bitacora{display:flex;flex-direction:column;gap:8px}
-.bitacora .ev{border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;background:#fafbfd;font-size:13px}
-.bitacora .ev .hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
-.bitacora .ev .hd strong{font-size:13px}
-.bitacora .ev .hd .fecha{color:var(--muted);font-size:12px}
-.bitacora .ev .meta{color:var(--muted);font-size:12px;margin-bottom:4px}
-.bitacora .ev .obs{color:var(--text);font-size:13px;white-space:pre-wrap}
-.ciclo-card{border-left:3px solid var(--st);padding:8px 12px;background:#fafbfd;border-radius:0 var(--radius) var(--radius) 0;margin-bottom:6px}
-.ciclo-card.cerrado{border-left-color:var(--success)}
-.tabs{display:flex;border-bottom:1px solid var(--border);margin-bottom:14px;gap:2px;overflow-x:auto}
-.tabs button{background:transparent;border:none;padding:9px 14px;border-radius:0;border-bottom:2px solid transparent;color:var(--muted);font-weight:500;white-space:nowrap}
-.tabs button.active{color:var(--primary);border-bottom-color:var(--primary)}
-.tabs button:hover{color:var(--text);background:transparent}
-.pill{display:inline-block;padding:1px 7px;font-size:11px;border-radius:99px;background:var(--chip-bg);color:var(--info);margin-left:4px}
-.notice{padding:10px 12px;border-radius:var(--radius);margin-bottom:12px;font-size:13px}
-.notice.warn{background:#fef3c7;color:#92400e;border:1px solid #fde68a}
-.notice.info{background:#dde9fb;color:#1e40af;border:1px solid #bfdbfe}
-.notice.danger{background:#fbe1de;color:#991b1b;border:1px solid #fecaca}
-.toast{position:fixed;bottom:18px;right:18px;background:var(--text);color:#fff;padding:10px 16px;border-radius:var(--radius);box-shadow:var(--shadow-lg);font-size:13px;z-index:200;animation:slideUp .25s ease;max-width:380px}
-.toast.error{background:var(--danger)}
-.toast.success{background:var(--success)}
+.modal header{display:flex;justify-content:space-between;align-items:center;padding:18px 22px;border-bottom:1px solid var(--border)}
+.modal header h2{margin:0;font-size:16px;font-weight:600;letter-spacing:-.01em}
+.modal .body{padding:22px;overflow:auto;flex:1}
+.modal footer{padding:14px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;background:var(--surface-2)}
+
+/* Bitácora */
+.bitacora{display:flex;flex-direction:column;gap:0}
+.bitacora .ev{border-bottom:1px solid var(--border);padding:14px 0;font-size:13px}
+.bitacora .ev:last-child{border-bottom:none}
+.bitacora .ev .hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap}
+.bitacora .ev .hd strong{font-size:13px;font-weight:600}
+.bitacora .ev .hd .fecha{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+.bitacora .ev .meta{color:var(--muted);font-size:12px;margin-bottom:6px}
+.bitacora .ev .obs{color:var(--text-2);font-size:13px;white-space:pre-wrap;line-height:1.5;padding:6px 0}
+
+.ciclo-card{border:1px solid var(--border);border-left:3px solid var(--st);padding:12px 14px;border-radius:0 4px 4px 0;margin-bottom:8px;background:var(--surface)}
+.ciclo-card.cerrado{border-left-color:var(--op)}
+
+/* Tabs */
+.tabs{display:flex;border-bottom:1px solid var(--border);margin-bottom:18px;gap:0;overflow-x:auto}
+.tabs button{background:transparent;border:none;padding:11px 16px;border-radius:0;border-bottom:2px solid transparent;color:var(--muted);font-weight:500;white-space:nowrap;font-size:13px}
+.tabs button.active{color:var(--text);border-bottom-color:var(--accent)}
+.tabs button:hover:not(.active){color:var(--text);background:transparent}
+
+/* Notice */
+.notice{padding:10px 14px;border-radius:4px;margin-bottom:14px;font-size:13px;border:1px solid var(--border)}
+.notice.warn{background:#fef9c3;color:#854d0e;border-color:#fde68a}
+.notice.info{background:#eff6ff;color:#1e40af;border-color:#bfdbfe}
+.notice.danger{background:#fef2f2;color:#991b1b;border-color:#fecaca}
+
+/* Toast */
+.toast{position:fixed;bottom:22px;right:22px;background:var(--text);color:#fff;padding:11px 18px;border-radius:6px;font-size:13px;z-index:200;animation:slideUp .25s ease;max-width:380px;box-shadow:0 8px 20px rgba(0,0,0,.2)}
+.toast.error{background:var(--noop)}
+.toast.success{background:var(--op)}
 @keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
-/* Session recorder widget */
-.rec-widget{position:fixed;bottom:18px;left:18px;background:#0f172a;color:#fff;border-radius:8px;box-shadow:var(--shadow-lg);font-size:12px;z-index:150;user-select:none;min-width:180px}
+
+/* Recorder — sin cambios */
+.rec-widget{position:fixed;bottom:18px;left:18px;background:#0f172a;color:#fff;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);font-size:12px;z-index:150;user-select:none;min-width:180px}
 .rec-widget.minimized{min-width:auto}
 .rec-widget .rw-hd{padding:8px 10px;cursor:move;display:flex;justify-content:space-between;align-items:center;gap:8px;border-bottom:1px solid #1e293b}
 .rec-widget .rw-hd .ttl{font-weight:600;font-size:12px;letter-spacing:.3px}
-.rec-widget .rw-hd .dot{display:inline-block;width:9px;height:9px;border-radius:99px;background:#475569;margin-right:5px;vertical-align:middle}
+.rec-widget .rw-hd .dot{display:inline-block;width:8px;height:8px;border-radius:99px;background:#475569;margin-right:5px;vertical-align:middle}
 .rec-widget.recording .rw-hd .dot{background:#dc2626;animation:pulse 1.2s infinite}
-.rec-widget.paused .rw-hd .dot{background:var(--warn)}
+.rec-widget.paused .rw-hd .dot{background:var(--st)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 .rec-widget .rw-bd{padding:8px 10px;display:flex;flex-direction:column;gap:6px}
 .rec-widget.minimized .rw-bd{display:none}
-.rec-widget button{background:#1e293b;color:#fff;border:1px solid #334155;padding:5px 9px;border-radius:4px;font-size:11px}
+.rec-widget button{background:#1e293b;color:#fff;border:1px solid #334155;padding:5px 9px;border-radius:4px;font-size:11px;font-weight:500}
 .rec-widget button:hover{background:#334155}
 .rec-widget .row{display:flex;gap:5px}
 .rec-widget .row button{flex:1}
 .rec-widget .info{font-size:11px;color:#94a3b8;text-align:center}
 .rec-widget .ghost-btn{background:transparent;border:none;color:#94a3b8;padding:2px 5px;font-size:14px;line-height:1}
 .rec-widget .ghost-btn:hover{color:#fff;background:transparent}
+
 small.muted{color:var(--muted);font-size:11px}
-.event-type-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:14px}
-.event-type-grid button{text-align:left;padding:10px 12px}
-.event-type-grid button strong{display:block;margin-bottom:2px}
+
+.event-type-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:18px}
+.event-type-grid button{text-align:left;padding:12px 14px;border-radius:6px}
+.event-type-grid button strong{display:block;margin-bottom:3px;font-weight:600}
 .event-type-grid button small{color:var(--muted);font-size:11px}
-.event-type-grid button.selected{background:var(--primary);color:#fff;border-color:var(--primary)}
-.event-type-grid button.selected small{color:rgba(255,255,255,.85)}
+.event-type-grid button.selected{background:var(--accent);color:#fff;border-color:var(--accent)}
+.event-type-grid button.selected small{color:rgba(255,255,255,.75)}
+
+/* Mini bar chart (sparkline-ish) */
+.bar{display:inline-block;height:4px;background:var(--accent);border-radius:99px;vertical-align:middle;margin-right:6px}
+
 @media (max-width:900px){
+  main{padding:18px 16px 60px}
   .grid-2,.grid-3{grid-template-columns:1fr}
   .kv{grid-template-columns:1fr}
   .kv dt{font-weight:600;color:var(--text)}
+  header.top{padding:0 14px;gap:12px}
   header.top nav{overflow:auto}
   header.top h1 small{display:none}
+  .kpis{grid-template-columns:repeat(2,1fr)}
+  .kpi{border-right:1px solid var(--border);border-bottom:1px solid var(--border)}
+  .kpi:nth-child(2n){border-right:none}
+  .view h2{font-size:18px}
 }
 </style>
 </head>
 <body>
 <div class="app">
   <header class="top">
-    <h1>HHHA <small>Equipos Biomédicos Críticos · v0.1</small></h1>
+    <h1>HHHA <small>Equipos Críticos · v0.2</small></h1>
     <nav id="nav"></nav>
     <div class="tools">
-      <span id="user-tag">Cristian</span>
-      <button id="btn-export" title="Exportar datos">⇩ Export</button>
-      <button id="btn-import" title="Importar datos">⇧ Import</button>
-      <button id="btn-reset" title="Resetear a seed inicial">↻ Reset</button>
+      <span class="user-tag">Cristian</span>
+      <button id="btn-export" title="Exportar datos">Exportar</button>
+      <button id="btn-import" title="Importar datos">Importar</button>
+      <button id="btn-reset" title="Resetear a seed inicial">Reset</button>
     </div>
   </header>
   <main id="main"></main>
@@ -604,7 +705,6 @@ VIEWS.dashboard = function(root){
   const today = new Date();
   const year = today.getFullYear(), month = today.getMonth();
   const mesActual = NUM_MES[month];
-  // Recalcular estados al vuelo
   state.equipos.forEach(recalcEstadoEquipo);
 
   const opCount = state.equipos.filter(e=>e.estado==='operativo').length;
@@ -616,89 +716,286 @@ VIEWS.dashboard = function(root){
   const ciclosAbiertos = state.ciclos.filter(c => c.estado === 'abierto');
   const eventosBorrador = state.eventos.filter(e => e.oficial !== 'Sí' && !e.anulado);
 
-  // MP del mes
-  const mpProgMes = state.equipos.filter(e => mpProgramadaEnMes(e, mesActual) && e.estado !== 'baja');
-  const mpEjecMes = mpProgMes.filter(e => mpDelMesEjecutada(e, year, month));
-  const mpPendMes = mpProgMes.length - mpEjecMes.length;
+  // === KPI strip (clickeable) ===
+  const kpis = el('div',{class:'kpis'},
+    kpiCell('Total equipos', state.equipos.length, ()=>navigate('equipos',{})),
+    kpiCell('Operativos', opCount, ()=>navigate('equipos',{estado:'operativo'}), ''),
+    kpiCell('No operativos', noopCount, ()=>navigate('equipos',{estado:'no_operativo'}), noopCount>0?'alert':''),
+    kpiCell('En serv. técnico', stCount, ()=>navigate('equipos',{estado:'en_servicio_tecnico'}), stCount>0?'warn':''),
+    kpiCell('Alertas >30 d', alertaDias.length, ()=>navigate('equipos',{alerta30:'1'}), alertaDias.length>0?'alert':''),
+    kpiCell('Pend. abiertos', pendAbiertos.length, ()=>navigate('pendientes',{estado:'abierto'}), pendAbiertos.length>0?'warn':''),
+    kpiCell('Ciclos abiertos', ciclosAbiertos.length, ()=>navigate('ciclos',{estado:'abierto'})),
+    kpiCell('Eventos borrador', eventosBorrador.length, ()=>navigate('eventos',{oficial:'No'}))
+  );
 
-  const view = el('div',{class:'view'},
-    el('h2',{},'Dashboard · ' + today.toLocaleDateString('es-CL',{day:'2-digit',month:'long',year:'numeric'})),
-    el('div',{class:'cards'},
-      el('div',{class:'card ok'},
-        el('div',{class:'lbl'},'Operativos'), el('div',{class:'val'}, opCount)),
-      el('div',{class:'card alert'},
-        el('div',{class:'lbl'},'No operativos'), el('div',{class:'val'}, noopCount)),
-      el('div',{class:'card warn'},
-        el('div',{class:'lbl'},'En servicio téc.'), el('div',{class:'val'}, stCount)),
-      el('div',{class:'card'},
-        el('div',{class:'lbl'},'De baja'), el('div',{class:'val'}, bajaCount)),
-      el('div',{class:'card alert'},
-        el('div',{class:'lbl'},'Alertas >30 días'), el('div',{class:'val'}, alertaDias.length)),
-      el('div',{class:'card warn'},
-        el('div',{class:'lbl'},'Pendientes abiertos'), el('div',{class:'val'}, pendAbiertos.length)),
-      el('div',{class:'card info'},
-        el('div',{class:'lbl'},'Ciclos abiertos'), el('div',{class:'val'}, ciclosAbiertos.length)),
-      el('div',{class:'card'},
-        el('div',{class:'lbl'},'Eventos sin oficializar'), el('div',{class:'val'}, eventosBorrador.length))
-    ),
-
-    el('div',{class:'grid-2'},
-      // MP del mes
-      el('div',{class:'section'},
-        el('h3',{},`MP del mes · ${mesActual} ${year}`),
-        el('div',{class:'cards',style:{gridTemplateColumns:'1fr 1fr 1fr',marginBottom:'10px'}},
-          el('div',{class:'card ok'},
-            el('div',{class:'lbl'},'Ejecutadas'), el('div',{class:'val'}, mpEjecMes.length)),
-          el('div',{class:'card warn'},
-            el('div',{class:'lbl'},'Pendientes'), el('div',{class:'val'}, mpPendMes)),
-          el('div',{class:'card'},
-            el('div',{class:'lbl'},'Programadas'), el('div',{class:'val'}, mpProgMes.length))
-        ),
-        el('button',{class:'primary',onclick:()=>navigate('mp')},'Ir a MP del mes →')
+  root.appendChild(el('div',{class:'view'},
+    el('h2',{},'Resumen general'),
+    el('div',{class:'subtitle'}, today.toLocaleDateString('es-CL',{weekday:'long',day:'2-digit',month:'long',year:'numeric'})),
+    kpis,
+    renderSumMPAnual(year),
+    renderSumServicios(),
+    renderSumEjecutoresMP(year, month),
+    alertaDias.length > 0 ? renderSumAlertas(alertaDias) : null,
+    pendAbiertos.length > 0 ? el('div',{class:'sum-section'},
+      el('div',{class:'sum-section-hd'},
+        el('h3',{}, `Pendientes próximos / vencidos`),
+        el('span',{class:'hint'}, `${pendAbiertos.length} abiertos · click para ver`)
       ),
-      // Alertas >30 días
-      el('div',{class:'section'},
-        el('h3',{},`Equipos > 30 días sin avance (${alertaDias.length})`),
-        alertaDias.length === 0
-          ? el('div',{class:'empty small'},'Sin alertas. Todos al día.')
-          : el('div',{}, ...alertaDias.slice(0,8).map(e =>
-              el('div',{style:{padding:'7px 0',borderBottom:'1px solid var(--border)',cursor:'pointer',display:'flex',justifyContent:'space-between'},onclick:()=>navigate('equipo',{inv:e.inv})},
-                el('div',{},
-                  el('strong',{},`${e.inv} · ${e.equipo}`),
-                  el('br'),
-                  el('small',{class:'muted'}, `${e.servicio||''} — ${e.ubic||''}`)
-                ),
-                el('div',{style:{textAlign:'right'}},
-                  badgeEstado(e.estado),
-                  el('br'),
-                  el('small',{class:'muted'}, diasEnEstado(e)+' días')
-                )
-              )
-            ))
-      )
-    ),
+      renderPendientesTabla(pendAbiertos.sort((a,b)=>(a.fechaComp||'9999').localeCompare(b.fechaComp||'9999')).slice(0,10))
+    ) : null
+  ));
+};
 
-    el('div',{class:'section'},
-      el('h3',{},`Pendientes próximos a vencer / vencidos (${pendAbiertos.length})`),
-      pendAbiertos.length === 0
-        ? el('div',{class:'empty small'},'Sin pendientes abiertos.')
-        : renderPendientesTabla(pendAbiertos.slice(0,10))
+function kpiCell(lbl, val, onclick, cls){
+  return el('div',{class:'kpi '+(cls||''),onclick},
+    el('div',{class:'lbl'}, lbl),
+    el('div',{class:'val'}, String(val))
+  );
+}
+
+// ====== Tabla resumen: MP del año por mes × resultado ======
+function renderSumMPAnual(year){
+  // Por cada mes: cuenta por código P programadas, y por código R: Si, C* (reprog), FS, NU, Baja, Sin registro
+  const rows = MESES.map((mes, idx) => {
+    const prog = state.equipos.filter(eq => eq.estado!=='baja' && mpProgramadaEnMes(eq, mes));
+    const reg = (eq) => (eq.registro||{})[mes] || {};
+    const si = prog.filter(eq => reg(eq).R === 'Si').length;
+    const repro = prog.filter(eq => /^C[1-8]$/.test(reg(eq).R||'')).length;
+    const fs = prog.filter(eq => reg(eq).R === 'FS').length;
+    const nu = prog.filter(eq => reg(eq).R === 'NU').length;
+    const baja = prog.filter(eq => reg(eq).R === 'Baja').length;
+    const sinReg = prog.filter(eq => !reg(eq).R).length;
+    return {mes, total: prog.length, si, repro, fs, nu, baja, sinReg};
+  });
+  const totals = rows.reduce((a,r)=>({
+    total:a.total+r.total, si:a.si+r.si, repro:a.repro+r.repro,
+    fs:a.fs+r.fs, nu:a.nu+r.nu, baja:a.baja+r.baja, sinReg:a.sinReg+r.sinReg
+  }), {total:0,si:0,repro:0,fs:0,nu:0,baja:0,sinReg:0});
+
+  function cell(val, mes, resultado){
+    if(val === 0) return el('td',{class:'cell zero'}, '–');
+    return el('td',{class:'cell', onclick:()=>navigate('equipos',{mes,mesYear:year,mpResultado:resultado||'todos'})},
+      el('span',{class:'v'}, String(val))
+    );
+  }
+
+  return el('div',{class:'sum-section'},
+    el('div',{class:'sum-section-hd'},
+      el('h3',{},'MP del año por mes y resultado'),
+      el('span',{class:'hint'},`${year} · click en cualquier celda para ver los equipos`)
+    ),
+    el('table',{class:'sum-table'},
+      el('thead',{},
+        el('tr',{},
+          el('th',{},'Mes'),
+          el('th',{title:'Total programadas (X/R/RA/PM)'},'Programadas'),
+          el('th',{},'Realizadas'),
+          el('th',{title:'Causales C1–C8'},'Reprog.'),
+          el('th',{title:'Fuera de servicio'},'FS'),
+          el('th',{title:'No ubicable'},'NU'),
+          el('th',{},'Baja'),
+          el('th',{},'Sin registro')
+        )
+      ),
+      el('tbody',{},
+        ...rows.map(r => el('tr',{},
+          el('td',{}, r.mes),
+          cell(r.total, r.mes, 'todos'),
+          cell(r.si, r.mes, 'Si'),
+          cell(r.repro, r.mes, 'reprog'),
+          cell(r.fs, r.mes, 'FS'),
+          cell(r.nu, r.mes, 'NU'),
+          cell(r.baja, r.mes, 'Baja'),
+          cell(r.sinReg, r.mes, 'sinreg')
+        )),
+        el('tr',{class:'total-row'},
+          el('td',{},'Total año'),
+          el('td',{class:'cell',onclick:()=>navigate('equipos',{mpAnual:'1'})}, el('span',{class:'v'}, String(totals.total))),
+          el('td',{class:'cell',onclick:()=>navigate('eventos',{tipo:'Mantención preventiva',resultado:'Si'})}, el('span',{class:'v'}, String(totals.si))),
+          el('td',{class:'cell',onclick:()=>navigate('eventos',{tipo:'Mantención preventiva',resultado:'reprog'})}, el('span',{class:'v'}, String(totals.repro))),
+          el('td',{}, String(totals.fs)),
+          el('td',{}, String(totals.nu)),
+          el('td',{}, String(totals.baja)),
+          el('td',{}, String(totals.sinReg))
+        )
+      )
     )
   );
-  root.appendChild(view);
-};
+}
+
+// ====== Tabla resumen: equipos por servicio × estado ======
+function renderSumServicios(){
+  const servicios = [...new Set(state.equipos.map(e=>e.servicio).filter(Boolean))].sort();
+  const today = new Date().toISOString().slice(0,10);
+  const rows = servicios.map(s => {
+    const eqs = state.equipos.filter(e => e.servicio === s);
+    const op = eqs.filter(e => e.estado === 'operativo').length;
+    const noop = eqs.filter(e => e.estado === 'no_operativo').length;
+    const st = eqs.filter(e => e.estado === 'en_servicio_tecnico').length;
+    const baja = eqs.filter(e => e.estado === 'baja').length;
+    const pend = state.pendientes.filter(p => !p.anulado && p.servicio === s && p.estado !== 'cerrado').length;
+    return {servicio:s, total:eqs.length, op, noop, st, baja, pend};
+  }).sort((a,b)=>(b.noop+b.st+b.pend)-(a.noop+a.st+a.pend));
+
+  const totals = rows.reduce((a,r)=>({total:a.total+r.total,op:a.op+r.op,noop:a.noop+r.noop,st:a.st+r.st,baja:a.baja+r.baja,pend:a.pend+r.pend}),{total:0,op:0,noop:0,st:0,baja:0,pend:0});
+
+  function c(val, servicio, params){
+    if(val === 0) return el('td',{class:'cell zero'}, '–');
+    return el('td',{class:'cell', onclick:()=>navigate(params.__view||'equipos', {servicio, ...params})}, el('span',{class:'v'}, String(val)));
+  }
+
+  return el('div',{class:'sum-section'},
+    el('div',{class:'sum-section-hd'},
+      el('h3',{},'Equipos por servicio y estado'),
+      el('span',{class:'hint'}, `${servicios.length} servicios · ordenados por carga abierta`)
+    ),
+    el('div',{style:{maxHeight:'400px',overflow:'auto',border:'1px solid var(--border)',borderRadius:'6px'}},
+      el('table',{class:'sum-table',style:{marginBottom:'0',border:'none'}},
+        el('thead',{},
+          el('tr',{},
+            el('th',{},'Servicio'),
+            el('th',{},'Total'),
+            el('th',{},'Operativos'),
+            el('th',{},'No op.'),
+            el('th',{},'Serv. téc.'),
+            el('th',{},'Baja'),
+            el('th',{},'Pendientes')
+          )
+        ),
+        el('tbody',{},
+          ...rows.map(r => el('tr',{},
+            el('td',{}, r.servicio),
+            c(r.total, r.servicio, {}),
+            c(r.op, r.servicio, {estado:'operativo'}),
+            c(r.noop, r.servicio, {estado:'no_operativo'}),
+            c(r.st, r.servicio, {estado:'en_servicio_tecnico'}),
+            c(r.baja, r.servicio, {estado:'baja'}),
+            c(r.pend, r.servicio, {__view:'pendientes',estado:'abierto'})
+          )),
+          el('tr',{class:'total-row'},
+            el('td',{},'Total'),
+            el('td',{}, String(totals.total)),
+            el('td',{}, String(totals.op)),
+            el('td',{}, String(totals.noop)),
+            el('td',{}, String(totals.st)),
+            el('td',{}, String(totals.baja)),
+            el('td',{}, String(totals.pend))
+          )
+        )
+      )
+    )
+  );
+}
+
+// ====== Tabla resumen: MP del mes por ejecutor ======
+function renderSumEjecutoresMP(year, monthIdx){
+  const mes = NUM_MES[monthIdx];
+  const keyMes = `${year}-${String(monthIdx+1).padStart(2,'0')}`;
+  state.asignacionesMP[keyMes] = state.asignacionesMP[keyMes] || {};
+  const mpProgEquipos = state.equipos.filter(eq => eq.estado !== 'baja' && mpProgramadaEnMes(eq, mes));
+
+  const rows = EJECUTORES.map(ej => {
+    const asignados = mpProgEquipos.filter(eq => state.asignacionesMP[keyMes][eq.inv] === ej);
+    const ejecutadas = asignados.filter(eq => mpDelMesEjecutada(eq, year, monthIdx)).length;
+    const pendientes = asignados.length - ejecutadas;
+    const pct = asignados.length === 0 ? null : Math.round(ejecutadas / asignados.length * 100);
+    return {ejecutor:ej, asignadas:asignados.length, ejecutadas, pendientes, pct};
+  });
+  const sinAsignar = mpProgEquipos.filter(eq => !state.asignacionesMP[keyMes][eq.inv]).length;
+
+  const totalAsig = rows.reduce((a,r)=>a+r.asignadas,0);
+  const totalEjec = rows.reduce((a,r)=>a+r.ejecutadas,0);
+  const totalPend = rows.reduce((a,r)=>a+r.pendientes,0);
+
+  function c(val, ejecutor, params){
+    if(val === 0) return el('td',{class:'cell zero'}, '–');
+    return el('td',{class:'cell', onclick:()=>navigate('mp', {ejecutor, ...params})}, el('span',{class:'v'}, String(val)));
+  }
+
+  return el('div',{class:'sum-section'},
+    el('div',{class:'sum-section-hd'},
+      el('h3',{},`MP del mes · ${mes} ${year} · por ejecutor`),
+      el('span',{class:'hint'},
+        sinAsignar > 0
+          ? el('span',{style:{color:'var(--noop)'}}, `${sinAsignar} sin asignar`)
+          : `${totalAsig} asignadas`
+      )
+    ),
+    el('table',{class:'sum-table'},
+      el('thead',{},
+        el('tr',{},
+          el('th',{},'Ejecutor'),
+          el('th',{},'Asignadas'),
+          el('th',{},'Ejecutadas'),
+          el('th',{},'Pendientes'),
+          el('th',{},'Cumplimiento')
+        )
+      ),
+      el('tbody',{},
+        ...rows.filter(r=>r.asignadas>0).map(r => el('tr',{},
+          el('td',{}, r.ejecutor),
+          c(r.asignadas, r.ejecutor, {}),
+          c(r.ejecutadas, r.ejecutor, {estadoMP:'ejec'}),
+          c(r.pendientes, r.ejecutor, {estadoMP:'pend'}),
+          el('td',{},
+            r.pct == null ? '–' : el('span',{},
+              el('span',{class:'bar',style:{width: Math.max(4, r.pct*0.6)+'px',background: r.pct===100?'var(--op)':r.pct>=50?'var(--st)':'var(--noop)'}}),
+              r.pct + '%'
+            )
+          )
+        )),
+        sinAsignar > 0 ? el('tr',{style:{background:'#fef9c3'}},
+          el('td',{}, el('strong',{}, 'Sin asignar')),
+          el('td',{class:'cell', onclick:()=>navigate('mp',{sinAsignar:'1'})}, el('span',{class:'v'}, String(sinAsignar))),
+          el('td',{}, '–'), el('td',{}, '–'), el('td',{}, '–')
+        ) : null,
+        el('tr',{class:'total-row'},
+          el('td',{},'Total'),
+          el('td',{}, String(totalAsig+sinAsignar)),
+          el('td',{}, String(totalEjec)),
+          el('td',{}, String(totalPend+sinAsignar)),
+          el('td',{}, totalAsig+sinAsignar === 0 ? '–' : Math.round(totalEjec/(totalAsig+sinAsignar)*100)+'%')
+        )
+      )
+    )
+  );
+}
+
+// ====== Tabla resumen de alertas >30 días ======
+function renderSumAlertas(alertaDias){
+  return el('div',{class:'sum-section'},
+    el('div',{class:'sum-section-hd'},
+      el('h3',{},`Equipos con >30 días sin avance`),
+      el('span',{class:'hint'},`${alertaDias.length} casos · click para ver ficha`)
+    ),
+    el('table',{class:'data'},
+      el('thead',{}, el('tr',{}, ['N° Inv.','Equipo','Servicio','Estado','Días'].map(h=>el('th',{},h)))),
+      el('tbody',{}, ...alertaDias.sort((a,b)=>diasEnEstado(b)-diasEnEstado(a)).slice(0,15).map(e =>
+        el('tr',{class:'clickable',onclick:()=>navigate('equipo',{inv:e.inv})},
+          el('td',{}, e.inv),
+          el('td',{}, e.equipo, el('br'), el('small',{class:'muted'}, (e.marca||'')+' '+(e.modelo||''))),
+          el('td',{}, e.servicio||'—', el('br'), el('small',{class:'muted'}, e.unidad||'')),
+          el('td',{}, badgeEstado(e.estado)),
+          el('td',{class:'num',style:{color:'var(--noop)',fontWeight:'600'}}, diasEnEstado(e))
+        )
+      ))
+    )
+  );
+}
 
 //---------------- EQUIPOS ----------------
 VIEWS.equipos = function(root, params){
   const search = el('input',{type:'search',placeholder:'Buscar por N° Inv., serie, equipo, marca, modelo, servicio…',value:params.q||''});
   const selServicio = el('select',{},
     el('option',{value:''},'Todos los servicios'),
-    ...[...new Set(state.equipos.map(e=>e.servicio).filter(Boolean))].sort().map(s=>el('option',{value:s},s))
+    ...[...new Set(state.equipos.map(e=>e.servicio).filter(Boolean))].sort().map(s=>el('option',{value:s,selected:s===params.servicio?'selected':false},s))
   );
+  if(params.servicio) selServicio.value = params.servicio;
   const selEstado = el('select',{},
     el('option',{value:''},'Todos los estados'),
-    ...ESTADOS_PRIMARIOS.map(e=>el('option',{value:e},ESTADO_LABEL[e]))
+    ...ESTADOS_PRIMARIOS.map(e=>el('option',{value:e,selected:e===params.estado?'selected':false},ESTADO_LABEL[e]))
   );
+  if(params.estado) selEstado.value = params.estado;
   const selFreq = el('select',{},
     el('option',{value:''},'Toda frecuencia'),
     ...[...new Set(state.equipos.map(e=>e.freq).filter(Boolean))].sort().map(s=>el('option',{value:s},s))
@@ -709,7 +1006,32 @@ VIEWS.equipos = function(root, params){
     el('option',{value:'no'},'Sin pendientes')
   );
   const tbody = el('tbody',{});
-  const counter = el('div',{class:'muted',style:{fontSize:'12px'}},'');
+  const counter = el('div',{class:'muted',style:{fontSize:'12px',padding:'8px 0'}},'');
+  const chipsBar = el('div',{class:'filters'});
+
+  function applyParamsFilter(equipos){
+    let res = equipos;
+    // Filtro por mes/resultado MP (de la tabla resumen)
+    if(params.mes && params.mpResultado){
+      const mes = params.mes, r = params.mpResultado;
+      res = res.filter(eq => {
+        if(eq.estado==='baja') return false;
+        if(!mpProgramadaEnMes(eq, mes)) return false;
+        const reg = (eq.registro||{})[mes] || {};
+        if(r === 'todos') return true;
+        if(r === 'sinreg') return !reg.R;
+        if(r === 'reprog') return /^C[1-8]$/.test(reg.R||'');
+        return reg.R === r;
+      });
+    }
+    if(params.alerta30){
+      res = res.filter(e => ['no_operativo','en_servicio_tecnico'].includes(e.estado) && diasEnEstado(e) > 30);
+    }
+    if(params.mpAnual){
+      res = res.filter(e => e.estado!=='baja' && Object.values(e.prog||{}).some(p=>['X','R','RA','PM'].includes(p)));
+    }
+    return res;
+  }
 
   function render(){
     state.equipos.forEach(recalcEstadoEquipo);
@@ -718,7 +1040,7 @@ VIEWS.equipos = function(root, params){
     const norm = s => (s||'').toString().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
     const tokens = norm(q).split(/\s+/).filter(Boolean);
 
-    const filtered = state.equipos.filter(e => {
+    let filtered = state.equipos.filter(e => {
       if(fs && e.servicio !== fs) return false;
       if(fe && e.estado !== fe) return false;
       if(ff && e.freq !== ff) return false;
@@ -731,6 +1053,7 @@ VIEWS.equipos = function(root, params){
       }
       return true;
     });
+    filtered = applyParamsFilter(filtered);
 
     tbody.innerHTML = '';
     filtered.slice(0,500).forEach(e => {
@@ -746,23 +1069,50 @@ VIEWS.equipos = function(root, params){
         el('td',{}, badgeEstado(e.estado), el('br'), el('small',{class:'muted'}, diasEnEstado(e)+' d')),
         el('td',{}, e.freq||'—'),
         el('td',{}, mpProg ? (mpEjecutada ? el('span',{class:'badge mp-si'},'Ejecutada') : el('span',{class:'badge mp-no'},'Pendiente')) : el('small',{class:'muted'},'No prog.')),
-        el('td',{}, pend > 0 ? el('span',{class:'badge abierto'},pend+' pend.') : el('small',{class:'muted'},'—'))
+        el('td',{class:'num'}, pend > 0 ? el('span',{class:'badge abierto'},pend) : el('small',{class:'muted'},'—'))
       ));
     });
     counter.textContent = `${filtered.length} equipos${filtered.length>500?' (mostrando primeros 500)':''}`;
+    renderChips();
+  }
+
+  function renderChips(){
+    chipsBar.innerHTML = '';
+    const chips = [];
+    if(params.servicio) chips.push(['Servicio', params.servicio, ()=>{delete params.servicio; selServicio.value=''; render();}]);
+    if(params.estado) chips.push(['Estado', ESTADO_LABEL[params.estado], ()=>{delete params.estado; selEstado.value=''; render();}]);
+    if(params.mes && params.mpResultado){
+      const r = params.mpResultado === 'todos' ? 'Todas las MP' : params.mpResultado === 'reprog' ? 'Reprogramadas' : params.mpResultado === 'sinreg' ? 'Sin registro' : params.mpResultado;
+      chips.push(['MP '+params.mes, r, ()=>{delete params.mes; delete params.mpResultado; render();}]);
+    }
+    if(params.alerta30) chips.push(['Alerta', '>30 días', ()=>{delete params.alerta30; render();}]);
+    if(params.mpAnual) chips.push(['MP', 'Programadas en el año', ()=>{delete params.mpAnual; render();}]);
+    chips.forEach(([k,v,onclr]) => chipsBar.appendChild(el('span',{class:'filter-chip'},
+      el('span',{class:'k'}, k+':'), el('span',{}, v),
+      el('span',{class:'x',onclick:onclr}, '×')
+    )));
+    if(chips.length > 0){
+      chipsBar.appendChild(el('button',{class:'filter-clear',onclick:()=>{
+        Object.keys(params).forEach(k=>delete params[k]);
+        selServicio.value=''; selEstado.value=''; selFreq.value=''; selPend.value=''; search.value='';
+        render();
+      }},'Limpiar todo'));
+    }
   }
 
   [search,selServicio,selEstado,selFreq,selPend].forEach(i => i.addEventListener('input', render));
 
   root.appendChild(el('div',{class:'view'},
     el('h2',{},'Equipos'),
+    el('div',{class:'subtitle'},'Maestro de equipos biomédicos críticos.'),
     el('div',{class:'toolbar'},
       el('div',{class:'grow'},search),
       selServicio, selEstado, selFreq, selPend
     ),
+    chipsBar,
     counter,
-    el('div',{style:{marginTop:'10px',maxHeight:'calc(100vh - 230px)',overflow:'auto'}},
-      el('table',{class:'data'},
+    el('div',{style:{maxHeight:'calc(100vh - 280px)',overflow:'auto',border:'1px solid var(--border)',borderRadius:'6px'}},
+      el('table',{class:'data',style:{border:'none'}},
         el('thead',{},
           el('tr',{},
             ['N° Inv.','Equipo','Servicio / Unidad','Marca','Modelo','Estado','Freq. MP','MP del mes','Pend.'].map(h=>el('th',{},h))
@@ -991,14 +1341,18 @@ VIEWS.mp = function(root, params){
 
   const selExec = el('select',{},
     el('option',{value:''},'Todos los ejecutores'),
-    ...EJECUTORES.map(x=>el('option',{value:x},x))
+    ...EJECUTORES.map(x=>el('option',{value:x,selected:x===params.ejecutor?'selected':false},x))
   );
+  if(params.ejecutor) selExec.value = params.ejecutor;
   const selEst = el('select',{},
     el('option',{value:''},'Todos'),
-    el('option',{value:'ejec'},'Ejecutadas'),
-    el('option',{value:'pend'},'Pendientes'),
-    el('option',{value:'reprog'},'Reprogramadas (R en P)')
+    el('option',{value:'ejec',selected:params.estadoMP==='ejec'?'selected':false},'Ejecutadas'),
+    el('option',{value:'pend',selected:params.estadoMP==='pend'?'selected':false},'Pendientes'),
+    el('option',{value:'reprog'},'Reprogramadas (R en P)'),
+    el('option',{value:'sinAsignar',selected:params.sinAsignar?'selected':false},'Sin asignar')
   );
+  if(params.estadoMP) selEst.value = params.estadoMP;
+  if(params.sinAsignar) selEst.value = 'sinAsignar';
 
   const tbody = el('tbody',{});
   const counter = el('div',{class:'muted',style:{fontSize:'12px'}},'');
@@ -1032,6 +1386,7 @@ VIEWS.mp = function(root, params){
       if(fEst === 'ejec' && !ejec) return false;
       if(fEst === 'pend' && ejec) return false;
       if(fEst === 'reprog' && (eq.prog||{})[m] !== 'R') return false;
+      if(fEst === 'sinAsignar' && ej) return false;
       return true;
     });
 
@@ -1065,13 +1420,10 @@ VIEWS.mp = function(root, params){
 
   root.appendChild(el('div',{class:'view'},
     el('h2',{},'MP del mes'),
-    el('div',{class:'notice info'},
-      'Flujo: 1) selecciona mes · 2) asigna cada equipo a un ejecutor · 3) registra el evento MP cuando se entregue la documentación. ',
-      'Se excluyen equipos con FS/Baja/NU en meses anteriores del año y los dados de baja.'
-    ),
+    el('div',{class:'subtitle'},'Selecciona mes, asigna ejecutor y registra el evento al recibir la documentación. Se excluyen equipos con FS/Baja/NU en meses previos.'),
     el('div',{class:'toolbar'}, selMes, selExec, selEst, counter),
-    el('div',{style:{maxHeight:'calc(100vh - 240px)',overflow:'auto'}},
-      el('table',{class:'data'},
+    el('div',{style:{maxHeight:'calc(100vh - 240px)',overflow:'auto',border:'1px solid var(--border)',borderRadius:'6px'}},
+      el('table',{class:'data',style:{border:'none'}},
         el('thead',{}, el('tr',{},
           ['N° Inv.','Equipo','Servicio/Unidad','Marca-Modelo','Cód. P','Freq.','Ejecutor asignado','Estado MP','Acciones'].map(h=>el('th',{},h))
         )),
@@ -1083,10 +1435,10 @@ VIEWS.mp = function(root, params){
 };
 
 //---------------- CICLOS ----------------
-VIEWS.ciclos = function(root){
+VIEWS.ciclos = function(root, params){
   const tab = el('div',{class:'tabs'});
   const body = el('div',{});
-  let modo = 'abierto';
+  let modo = params.estado || 'abierto';
 
   function render(){
     tab.innerHTML = '';
@@ -1128,42 +1480,72 @@ VIEWS.ciclos = function(root){
 };
 
 //---------------- PENDIENTES ----------------
-VIEWS.pendientes = function(root){
+VIEWS.pendientes = function(root, params){
   const search = el('input',{type:'search',placeholder:'Buscar pendiente…'});
   const selTipo = el('select',{},
     el('option',{value:''},'Todos los tipos'),
-    ...Object.entries(TIPO_PENDIENTE).map(([k,v])=>el('option',{value:k},v))
+    ...Object.entries(TIPO_PENDIENTE).map(([k,v])=>el('option',{value:k,selected:k===params.tipo?'selected':false},v))
   );
+  if(params.tipo) selTipo.value = params.tipo;
   const selEst = el('select',{},
     el('option',{value:''},'Todos los estados'),
     el('option',{value:'creado'},'Creado'),
-    el('option',{value:'abierto'},'Abierto'),
-    el('option',{value:'cerrado'},'Cerrado')
+    el('option',{value:'abierto',selected:params.estado==='abierto'?'selected':false},'Abierto'),
+    el('option',{value:'cerrado',selected:params.estado==='cerrado'?'selected':false},'Cerrado')
   );
+  if(params.estado) selEst.value = params.estado;
   const selExec = el('select',{},
     el('option',{value:''},'Todos los ejecutores'),
-    ...EJECUTORES.map(x=>el('option',{value:x},x))
+    ...EJECUTORES.map(x=>el('option',{value:x,selected:x===params.ejecutor?'selected':false},x))
   );
+  if(params.ejecutor) selExec.value = params.ejecutor;
+  const selServ = el('select',{},
+    el('option',{value:''},'Todos los servicios'),
+    ...[...new Set(state.pendientes.map(p=>p.servicio).filter(Boolean))].sort().map(s=>el('option',{value:s,selected:s===params.servicio?'selected':false},s))
+  );
+  if(params.servicio) selServ.value = params.servicio;
   const container = el('div',{});
+  const chipsBar = el('div',{class:'filters'});
   function render(){
     const q = search.value.trim().toLowerCase();
-    const t = selTipo.value, e = selEst.value, ex = selExec.value;
+    const t = selTipo.value, e = selEst.value, ex = selExec.value, srv = selServ.value;
     const list = state.pendientes.filter(p => !p.anulado)
       .filter(p => !t || p.tipo === t)
       .filter(p => !e || p.estado === e)
       .filter(p => !ex || p.ejecutor === ex)
+      .filter(p => !srv || p.servicio === srv)
       .filter(p => !q || ((p.desc||'')+(p.inv||'')+(p.equipo||'')+(p.servicio||'')).toLowerCase().includes(q))
       .sort((a,b)=>(a.fechaComp||'9999').localeCompare(b.fechaComp||'9999'));
     container.innerHTML = '';
+    container.appendChild(el('div',{class:'muted',style:{fontSize:'12px',padding:'8px 0'}}, `${list.length} pendientes`));
     container.appendChild(renderPendientesTabla(list));
+    renderChips();
   }
-  [search,selTipo,selEst,selExec].forEach(i => i.addEventListener('input',render));
+  function renderChips(){
+    chipsBar.innerHTML = '';
+    const chips = [];
+    if(params.tipo) chips.push(['Tipo', TIPO_PENDIENTE[params.tipo], ()=>{delete params.tipo; selTipo.value=''; render();}]);
+    if(params.estado) chips.push(['Estado', params.estado, ()=>{delete params.estado; selEst.value=''; render();}]);
+    if(params.ejecutor) chips.push(['Ejecutor', params.ejecutor, ()=>{delete params.ejecutor; selExec.value=''; render();}]);
+    if(params.servicio) chips.push(['Servicio', params.servicio, ()=>{delete params.servicio; selServ.value=''; render();}]);
+    chips.forEach(([k,v,onclr]) => chipsBar.appendChild(el('span',{class:'filter-chip'},
+      el('span',{class:'k'}, k+':'), el('span',{}, v), el('span',{class:'x',onclick:onclr}, '×')
+    )));
+    if(chips.length>0) chipsBar.appendChild(el('button',{class:'filter-clear',onclick:()=>{
+      Object.keys(params).forEach(k=>delete params[k]);
+      selTipo.value=''; selEst.value=''; selExec.value=''; selServ.value=''; search.value='';
+      render();
+    }},'Limpiar todo'));
+  }
+  [search,selTipo,selEst,selExec,selServ].forEach(i => i.addEventListener('input',render));
   root.appendChild(el('div',{class:'view'},
-    el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center'}},
+    el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'6px',flexWrap:'wrap',gap:'10px'}},
       el('h2',{},'Pendientes'),
       el('button',{class:'primary',onclick:()=>nuevoPendiente({})},'+ Nuevo pendiente')
     ),
-    el('div',{class:'toolbar'}, el('div',{class:'grow'},search), selTipo, selEst, selExec),
+    el('div',{class:'subtitle'},'Gestiones, reprogramaciones de MP, documentos faltantes y recomendaciones.'),
+    el('div',{class:'toolbar'}, el('div',{class:'grow'},search), selTipo, selEst, selExec, selServ),
+    chipsBar,
     container
   ));
   render();
@@ -1196,30 +1578,47 @@ function renderPendientesTabla(list){
 }
 
 //---------------- EVENTOS (bitácora global) ----------------
-VIEWS.eventos = function(root){
+VIEWS.eventos = function(root, params){
   const search = el('input',{type:'search',placeholder:'Buscar por inv, equipo, folio, ejecutor, empresa, observación…'});
   const selTipo = el('select',{},
     el('option',{value:''},'Todos los tipos'),
-    ...TIPOS_EVENTO.map(t=>el('option',{value:t.label},t.label))
+    ...TIPOS_EVENTO.map(t=>el('option',{value:t.label,selected:t.label===params.tipo?'selected':false},t.label))
   );
+  if(params.tipo) selTipo.value = params.tipo;
   const selOficial = el('select',{},
     el('option',{value:''},'Todos'),
     el('option',{value:'Sí'},'Oficiales'),
-    el('option',{value:'No'},'Borradores')
+    el('option',{value:'No',selected:params.oficial==='No'?'selected':false},'Borradores')
   );
+  if(params.oficial) selOficial.value = params.oficial;
+  const selRes = el('select',{},
+    el('option',{value:''},'Cualquier resultado'),
+    el('option',{value:'Si',selected:params.resultado==='Si'?'selected':false},'Si'),
+    el('option',{value:'reprog',selected:params.resultado==='reprog'?'selected':false},'C1–C8 (reprog.)'),
+    el('option',{value:'FS'},'FS'),
+    el('option',{value:'NU'},'NU'),
+    el('option',{value:'Baja'},'Baja')
+  );
+  if(params.resultado) selRes.value = params.resultado;
   const container = el('div',{});
+  const chipsBar = el('div',{class:'filters'});
   function render(){
     const q = search.value.trim().toLowerCase();
-    const t = selTipo.value, o = selOficial.value;
+    const t = selTipo.value, o = selOficial.value, r = selRes.value;
     const list = state.eventos.filter(e => !e.anulado)
       .filter(e => !t || e.tipo === t)
       .filter(e => !o || (e.oficial||'No') === o)
+      .filter(e => {
+        if(!r) return true;
+        if(r === 'reprog') return /^C[1-8]$/.test(e.resultado||'');
+        return e.resultado === r;
+      })
       .filter(e => !q || JSON.stringify(e).toLowerCase().includes(q))
       .sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
     container.innerHTML = '';
-    container.appendChild(el('div',{class:'muted',style:{fontSize:'12px',marginBottom:'6px'}}, list.length+' eventos'));
-    container.appendChild(el('div',{style:{maxHeight:'calc(100vh - 240px)',overflow:'auto'}},
-      el('table',{class:'data'},
+    container.appendChild(el('div',{class:'muted',style:{fontSize:'12px',padding:'8px 0'}}, list.length+' eventos'));
+    container.appendChild(el('div',{style:{maxHeight:'calc(100vh - 280px)',overflow:'auto',border:'1px solid var(--border)',borderRadius:'6px'}},
+      el('table',{class:'data',style:{border:'none'}},
         el('thead',{}, el('tr',{}, ['Fecha','Tipo','Equipo','Servicio','Ejecutor','Folio','Resultado','Estado','Ofic.','Acciones'].map(h=>el('th',{},h)))),
         el('tbody',{}, ...list.map(ev => el('tr',{class:'clickable',onclick:()=>navigate('equipo',{inv:ev.inv})},
           el('td',{}, fmtFecha(ev.fecha)),
@@ -1238,13 +1637,35 @@ VIEWS.eventos = function(root){
       )
     ));
   }
-  [search,selTipo,selOficial].forEach(i => i.addEventListener('input', render));
+  function renderChips(){
+    chipsBar.innerHTML = '';
+    const chips = [];
+    if(params.tipo) chips.push(['Tipo', params.tipo, ()=>{delete params.tipo; selTipo.value=''; render();}]);
+    if(params.resultado){
+      const v = params.resultado === 'reprog' ? 'C1–C8' : params.resultado;
+      chips.push(['Resultado', v, ()=>{delete params.resultado; selRes.value=''; render();}]);
+    }
+    if(params.oficial) chips.push(['Oficial', params.oficial, ()=>{delete params.oficial; selOficial.value=''; render();}]);
+    chips.forEach(([k,v,onclr]) => chipsBar.appendChild(el('span',{class:'filter-chip'},
+      el('span',{class:'k'}, k+':'), el('span',{}, v), el('span',{class:'x',onclick:onclr}, '×')
+    )));
+    if(chips.length>0) chipsBar.appendChild(el('button',{class:'filter-clear',onclick:()=>{
+      Object.keys(params).forEach(k=>delete params[k]);
+      selTipo.value=''; selOficial.value=''; selRes.value=''; search.value='';
+      render();
+    }},'Limpiar todo'));
+  }
+  const origRender = render;
+  render = function(){ origRender(); renderChips(); };
+  [search,selTipo,selOficial,selRes].forEach(i => i.addEventListener('input', render));
   root.appendChild(el('div',{class:'view'},
-    el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center'}},
+    el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'6px',flexWrap:'wrap',gap:'10px'}},
       el('h2',{},'Bitácora de eventos'),
       el('button',{class:'primary',onclick:()=>nuevoEvento({})},'+ Nuevo evento')
     ),
-    el('div',{class:'toolbar'}, el('div',{class:'grow'},search), selTipo, selOficial),
+    el('div',{class:'subtitle'},'Todos los eventos registrados sobre los equipos (los 7 tipos). Click en una fila para abrir la ficha.'),
+    el('div',{class:'toolbar'}, el('div',{class:'grow'},search), selTipo, selRes, selOficial),
+    chipsBar,
     container
   ));
   render();
