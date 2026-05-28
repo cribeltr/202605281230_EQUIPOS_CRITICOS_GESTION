@@ -42,6 +42,19 @@ v0.2 [2026-05-28] Rediseño minimalista + tablas resumen clickeables.
   - Cada celda con valor navega a la vista correspondiente con filtros pre-aplicados.
   - Sistema de filtros vía params en cada vista (equipos, mp, pendientes, eventos).
   - Chip de filtros activos visible y limpiable en cada vista.
+v0.20 [2026-05-28] Auditoría: registro masivo MP + asignación masiva + fecha sugerida + modal anulación.
+  - Vista MP del mes: checkbox por fila + bulk-bar con:
+    · "+ Registrar MP a todos" → modal con fecha/resultado/ejecutor/observación
+      común, omite duplicados del mes por default.
+    · "Asignar a ejecutor" en lote.
+    · "Seleccionar todos los visibles".
+  - Fecha sugerida: día 5 del mes seleccionado en lugar de hoy (patrón observado).
+  - Anulación de evento ahora con modal: select de motivos predefinidos
+    (Mal ingresado, Equipo equivocado, Fecha errónea, Resultado equivocado,
+    Duplicado, Ejecutor equivocado, Documentación faltante, Otro) + detalle
+    opcional. Reemplaza prompt() feo.
+  - Audit: confirmado que no hay closures rotos, save no contabiliza saves
+    internos en metrics.
 v0.19 [2026-05-28] Fix: botones del tab Resumen no funcionaban.
   - Bug: renderResumenEquipo es función externa, sus botones "Resolver →",
     "Ver bitácora →", "Ver todos →", "Ver →" referenciaban tab/renderTabs/
@@ -699,7 +712,7 @@ header.top nav button .nav-badge{display:inline-block;margin-left:6px;padding:0 
 <body>
 <div class="app">
   <header class="top">
-    <h1>HHHA <small>Equipos Críticos · v0.19</small></h1>
+    <h1>HHHA <small>Equipos Críticos · v0.20</small></h1>
     <nav id="nav"></nav>
     <div class="tools">
       <span id="state-indicator" class="state-indicator" title="">—</span>
@@ -744,7 +757,7 @@ const SEED = {"equipos":[{"id":1,"carpeta":1,"inv":"2-115361","fam":"Incubadoras
 //==============================================================
 // CONSTANTES & CATÁLOGOS
 //==============================================================
-const APP_VERSION = '0.19';
+const APP_VERSION = '0.20';
 const STORAGE_KEY = 'hhha_v1_data';
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 const MES_NUM = {Ene:0,Feb:1,Mar:2,Abr:3,May:4,Jun:5,Jul:6,Ago:7,Sep:8,Oct:9,Nov:10,Dic:11};
@@ -2377,20 +2390,41 @@ VIEWS.mp = function(root, params){
 
   const tbody = el('tbody',{});
   const counter = el('div',{class:'muted',style:{fontSize:'12px'}},'');
+  const seleccion = new Set();
+  const bulkBar = el('div',{class:'bulk-bar',style:{display:'none'}});
 
   function asignar(inv, ejec){
     state.asignacionesMP[keyMes()][inv] = ejec || null;
     save();
   }
 
+  function renderBulkBar(){
+    bulkBar.innerHTML = '';
+    if(seleccion.size === 0){ bulkBar.style.display = 'none'; return; }
+    bulkBar.style.display = 'flex';
+    bulkBar.appendChild(el('span',{class:'bulk-count'}, `${seleccion.size} seleccionado${seleccion.size>1?'s':''}`));
+    bulkBar.appendChild(el('button',{class:'small',onclick:()=>{seleccion.clear();render();}},'Limpiar selección'));
+    bulkBar.appendChild(el('div',{style:{flex:'1'}}));
+    bulkBar.appendChild(el('button',{class:'small primary',onclick:()=>mpMasiva([...seleccion], year, monthIdx, ()=>{seleccion.clear();render();})}, '+ Registrar MP a todos'));
+    bulkBar.appendChild(el('button',{class:'small',onclick:()=>{
+      const ej = prompt('Asignar a:\n'+EJECUTORES.map((e,i)=>(i+1)+'. '+e).join('\n')+'\n\nNúmero (1-11):');
+      const idx = parseInt(ej) - 1;
+      if(idx >= 0 && idx < EJECUTORES.length){
+        seleccion.forEach(inv => { state.asignacionesMP[keyMes()][inv] = EJECUTORES[idx]; });
+        save();
+        toast(`${seleccion.size} equipos asignados a ${EJECUTORES[idx]}`,'success');
+        seleccion.clear();
+        render();
+      }
+    }}, '👤 Asignar a ejecutor'));
+  }
+
   function render(){
     state.equipos.forEach(recalcEstadoEquipo);
     const m = mesActual();
-    // filtrar equipos con P en mes y excluir los con FS/Baja/NU en meses anteriores del año
     let lista = state.equipos.filter(eq => {
       if(eq.estado === 'baja') return false;
       if(!mpProgramadaEnMes(eq, m)) return false;
-      // exclusión por FS/Baja/NU en meses previos
       const prevR = Object.entries(eq.registro||{}).some(([mes,obj]) => {
         const idx = MES_NUM[mes];
         return idx < monthIdx && ['FS','Baja','NU'].includes(obj.R);
@@ -2421,7 +2455,10 @@ VIEWS.mp = function(root, params){
         ...EJECUTORES.map(x=>el('option',{value:x,selected:x===asign?'selected':false},x))
       );
       selA.value = asign;
+      const cb = el('input',{type:'checkbox',checked:seleccion.has(eq.inv)?'checked':false,onclick:e=>{e.stopPropagation();if(e.target.checked) seleccion.add(eq.inv); else seleccion.delete(eq.inv); renderBulkBar();}});
+      cb.checked = seleccion.has(eq.inv);
       tbody.appendChild(el('tr',{},
+        el('td',{style:{width:'30px'}}, cb),
         el('td',{}, el('strong',{},eq.inv)),
         el('td',{}, eq.equipo),
         el('td',{}, eq.servicio, el('br'), el('small',{class:'muted'}, eq.unidad||'')),
@@ -2431,14 +2468,22 @@ VIEWS.mp = function(root, params){
         el('td',{}, selA),
         el('td',{}, ejecutada ? el('span',{class:'badge mp-si'},'Ejecutada') : el('span',{class:'badge mp-no'},'Pendiente')),
         el('td',{class:'actions'},
-          el('button',{class:'small primary',onclick:()=>mpRapida({invDefault:eq.inv, fechaDefault:`${year}-${String(monthIdx+1).padStart(2,'0')}-15`})}, ejecutada?'+ MP':'Registrar MP'),
+          el('button',{class:'small primary',onclick:()=>mpRapida({invDefault:eq.inv, fechaDefault:fechaSugeridaMP(year, monthIdx)})}, ejecutada?'+ MP':'Registrar MP'),
           el('button',{class:'small ghost',onclick:()=>navigate('equipo',{inv:eq.inv})},'Ficha')
         )
       ));
     });
     counter.textContent = `${lista.length} equipos`;
+    renderBulkBar();
   }
   [selExec,selEst].forEach(s => s.addEventListener('change',render));
+  // Botón seleccionar todos visibles
+  const btnSelTodos = el('button',{class:'small ghost',onclick:()=>{
+    const m = mesActual();
+    const visibles = state.equipos.filter(eq => eq.estado!=='baja' && mpProgramadaEnMes(eq, m));
+    visibles.forEach(eq => seleccion.add(eq.inv));
+    render();
+  }},'☐ Seleccionar todos los visibles');
 
   // Botones plantilla
   const btnDescargarPlantilla = el('button',{onclick:()=>descargarPlantillaMP(year, monthIdx)}, '↓ Descargar plantilla');
@@ -2457,12 +2502,13 @@ VIEWS.mp = function(root, params){
         btnDescargarPlantilla, btnSubirPlantilla, fileInputPlantilla
       )
     ),
-    el('div',{class:'subtitle'},'Selecciona mes, asigna ejecutor y registra el evento al recibir la documentación. Se excluyen equipos con FS/Baja/NU en meses previos. La plantilla Excel respeta el formato de tus asignaciones mensuales.'),
-    el('div',{class:'toolbar'}, selMes, selExec, selEst, counter),
-    el('div',{style:{maxHeight:'calc(100vh - 240px)',overflow:'auto',border:'1px solid var(--border)',borderRadius:'6px'}},
+    el('div',{class:'subtitle'},'Selecciona mes, asigna ejecutor y registra el evento al recibir la documentación. Marca varios y usa "Registrar MP a todos" para batch. Se excluyen equipos con FS/Baja/NU en meses previos.'),
+    el('div',{class:'toolbar'}, selMes, selExec, selEst, btnSelTodos, counter),
+    bulkBar,
+    el('div',{style:{maxHeight:'calc(100vh - 280px)',overflow:'auto',border:'1px solid var(--border)',borderRadius:'6px'}},
       el('table',{class:'data',style:{border:'none'}},
         el('thead',{}, el('tr',{},
-          ['N° Inv.','Equipo','Servicio/Unidad','Marca-Modelo','Cód. P','Freq.','Ejecutor asignado','Estado MP','Acciones'].map(h=>el('th',{},h))
+          ['','N° Inv.','Equipo','Servicio/Unidad','Marca-Modelo','Cód. P','Freq.','Ejecutor asignado','Estado MP','Acciones'].map(h=>el('th',{},h))
         )),
         tbody
       )
@@ -3488,6 +3534,101 @@ function estadoConflictoLabel(e){
 //==============================================================
 // MP RÁPIDA — modal mínimo (4 campos), recuerda último ejecutor y resultado
 //==============================================================
+// Sugiere día 5 del mes seleccionado (patrón observado: registras MPs del mes anterior).
+function fechaSugeridaMP(year, monthIdx){
+  return `${year}-${String(monthIdx+1).padStart(2,'0')}-05`;
+}
+
+// Registro masivo de MPs sobre varios equipos.
+function mpMasiva(invs, year, monthIdx, refresh){
+  if(!invs || invs.length === 0) return;
+  const fecha = el('input',{type:'date', value: fechaSugeridaMP(year, monthIdx)});
+  const resultado = el('select',{}, ...['Si','C1','C2','C3','C4','C5','C6','C7','C8','FS','Baja','NU','No'].map(x=>el('option',{value:x},x)));
+  resultado.value = getPref('ultimoResultadoMP','Si');
+  const ejecutor = el('select',{}, el('option',{value:''},'—'), ...EJECUTORES.map(x=>el('option',{value:x},x)));
+  ejecutor.value = getPref('ultimoEjecutor','');
+  const obs = el('textarea',{placeholder:'Observación común a todos los registros (opcional)'});
+  const omitirDup = el('input',{type:'checkbox',checked:'checked'});
+  function guardar(){
+    if(!fecha.value){ toast('Fecha requerida','error'); return; }
+    if(!ejecutor.value){ toast('Selecciona ejecutor','error'); return; }
+    let creados = 0, omitidos = 0, errores = [];
+    const yy = parseInt(fecha.value.slice(0,4));
+    const mm = parseInt(fecha.value.slice(5,7))-1;
+    invs.forEach(inv => {
+      const eq = findEquipo(inv);
+      if(!eq){ errores.push(inv+': no encontrado'); return; }
+      // Omitir si ya tiene MP no anulada en ese mes
+      if(omitirDup.checked && state.eventos.some(e =>
+        e.inv === inv && !e.anulado && e.tipo === 'Mantención preventiva' && e.fecha &&
+        e.fecha.startsWith(`${yy}-${String(mm+1).padStart(2,'0')}`))){
+        omitidos++;
+        return;
+      }
+      const ev = {
+        id: state.counters.evento++,
+        inv, equipo: eq.equipo, servicio: eq.servicio, fam: eq.fam,
+        tipo: 'Mantención preventiva',
+        fecha: fecha.value, fechaReg: hoyLocal(),
+        resultado: resultado.value,
+        ejecutor: ejecutor.value,
+        estado: resultado.value === 'Si' ? 'operativo' : resultado.value === 'Baja' ? 'baja' : (eq.estado||'operativo'),
+        obs: obs.value || null,
+        oficial: 'No',
+        anulado: false,
+        creadoPor: 'Cristian',
+        origen: 'masivo',
+        ts: new Date().toISOString()
+      };
+      state.eventos.push(ev);
+      aplicarEfectosEvento(ev);
+      audit('evento', ev.id, 'creado', null, 'MP masiva');
+      creados++;
+    });
+    setPref('ultimoEjecutor', ejecutor.value);
+    setPref('ultimoResultadoMP', resultado.value);
+    save();
+    closeModal();
+    let msg = `${creados} MP registradas`;
+    if(omitidos > 0) msg += ` · ${omitidos} omitidas (ya tenían MP en el mes)`;
+    if(errores.length > 0) msg += ` · ${errores.length} errores`;
+    toast(msg, 'success');
+    if(refresh) refresh();
+  }
+  modal({title:`Registrar MP a ${invs.length} equipos`, wide:true,
+    hasUnsavedData: ()=> obs.value.trim() !== '',
+    body: el('div',{},
+      el('div',{class:'notice info'},
+        `Se registrará una Mantención Preventiva con los mismos datos a los ${invs.length} equipos seleccionados.`
+      ),
+      el('div',{class:'grid-2'},
+        formField('Fecha de la MP', fecha),
+        formField('Resultado', resultado)
+      ),
+      formField('Ejecutor', ejecutor),
+      formField('Observación común (opcional)', obs),
+      el('label',{style:{display:'flex',alignItems:'center',gap:'8px',marginTop:'10px',fontSize:'13px',textTransform:'none',letterSpacing:'0'}},
+        omitirDup, 'Omitir equipos que ya tienen MP registrada en el mes (evita duplicados)'
+      ),
+      el('div',{class:'eq-info-card',style:{marginTop:'14px'}},
+        el('div',{class:'eq-info-lbl'}, 'Equipos seleccionados ('+invs.length+')'),
+        el('div',{style:{fontSize:'12px',color:'var(--muted)',maxHeight:'120px',overflow:'auto',marginTop:'6px'}},
+          invs.slice(0,30).map(i => {
+            const e = findEquipo(i);
+            return el('div',{}, `${i} · ${e?e.equipo:'?'} · ${e?e.servicio:'?'}`);
+          }),
+          invs.length > 30 ? el('div',{style:{fontStyle:'italic'}}, `… y ${invs.length-30} más`) : null
+        )
+      )
+    ),
+    footer: [
+      el('button',{onclick:closeModal},'Cancelar'),
+      el('button',{class:'primary',onclick:guardar}, `✓ Registrar MP a ${invs.length} equipos`)
+    ]
+  });
+  setTimeout(()=>ejecutor.value ? resultado.focus() : ejecutor.focus(), 80);
+}
+
 function mpRapida(opts){
   const eq = findEquipo(opts.invDefault);
   if(!eq){ toast('Equipo no encontrado','error'); return; }
@@ -3928,17 +4069,55 @@ function editarEvento(ev){
     }},'Guardar cambios')
   ]});
 }
+const MOTIVOS_ANULACION = [
+  'Mal ingresado',
+  'Equipo equivocado',
+  'Fecha errónea',
+  'Resultado equivocado',
+  'Duplicado',
+  'Ejecutor equivocado',
+  'Documentación faltante'
+];
+
 function anularEvento(ev){
-  // Si el evento se creó hace menos de 1 hora, advierte específicamente
-  if(ev.ts){
-    const mins = Math.floor((Date.now() - new Date(ev.ts).getTime()) / 60000);
-    if(mins >= 0 && mins < 60){
-      const preAviso = `\n\n⚠ Este evento se registró hace ${mins} minuto${mins!==1?'s':''}.\n¿Confirmas que quieres anularlo?`;
-      if(!confirm('Anular evento recién creado.'+preAviso)) return;
-    }
+  // Modal con motivos predefinidos + textarea opcional
+  const motivoSel = el('select',{}, el('option',{value:''},'— Selecciona motivo —'), ...MOTIVOS_ANULACION.map(m=>el('option',{value:m},m)), el('option',{value:'__otro'},'Otro (especificar)'));
+  const otro = el('textarea',{placeholder:'Detalle adicional (opcional si seleccionaste un motivo de la lista)'});
+  const minsCreado = ev.ts ? Math.floor((Date.now() - new Date(ev.ts).getTime()) / 60000) : -1;
+  const advRecien = minsCreado >= 0 && minsCreado < 60
+    ? el('div',{class:'notice warn',style:{marginBottom:'14px'}},
+        `⚠ Este evento se registró hace ${minsCreado} minuto${minsCreado!==1?'s':''}. Si fue por error reciente, anula y vuelve a registrar correctamente.`)
+    : null;
+  function ejecutar(){
+    const sel = motivoSel.value;
+    const extra = otro.value.trim();
+    let motivo = '';
+    if(sel === '__otro'){ if(!extra){ toast('Especifica el motivo','error'); return; } motivo = extra; }
+    else if(!sel){ toast('Selecciona un motivo','error'); return; }
+    else { motivo = sel + (extra ? ' — '+extra : ''); }
+    closeModal();
+    anularEventoAplicar(ev, motivo);
   }
-  const motivo = prompt('Motivo de anulación:');
-  if(!motivo) return;
+  modal({title:'Anular evento — '+ev.tipo, body: el('div',{},
+    advRecien,
+    el('div',{style:{fontSize:'13px',marginBottom:'12px',color:'var(--muted)'}},
+      `Equipo ${ev.inv} · Fecha ${fmtFecha(ev.fecha)}${ev.resultado?' · Resultado '+ev.resultado:''}${ev.ejecutor?' · '+ev.ejecutor:''}`
+    ),
+    formField('Motivo de anulación', motivoSel),
+    formField('Detalle (opcional)', otro),
+    el('div',{class:'notice info',style:{marginTop:'12px',fontSize:'12px'}},
+      'Anular revierte efectos: limpia R del mes en matriz, recalcula estado, anula ciclos/pendientes asociados.')
+  ),
+  footer:[
+    el('button',{onclick:closeModal},'Cancelar'),
+    el('button',{class:'danger',onclick:ejecutar},'⊘ Anular evento')
+  ],
+  hasUnsavedData: ()=> motivoSel.value !== '' || otro.value.trim() !== ''
+  });
+  setTimeout(()=>motivoSel.focus(), 80);
+}
+
+function anularEventoAplicar(ev, motivo){
   ev.anulado = true;
   ev.motivoAnulacion = motivo;
   ev.fechaAnulacion = new Date().toISOString();
